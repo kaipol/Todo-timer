@@ -201,20 +201,25 @@ class ReminderDialog(QDialog):
         return enabled, dt, repeat
 
 
-class MemoWidget(QWidget):
-    """备忘录组件"""
+class BaseMemoWidget(QWidget):
+    """备忘录基础界面，供主备忘录与今日待办共用"""
     
     reminder_triggered = pyqtSignal(str, str)  # item_id, content
+    data_changed = pyqtSignal()  # 数据变更信号
     
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, show_filter=True, show_sound=True):
         super().__init__(parent)
+        self.show_filter = show_filter
+        self.show_sound = show_sound
+        self.current_date = datetime.now().date()
+        self._last_sound_mode = 0
         self._setup_ui()
         
         # 提醒检查定时器
         self.reminder_timer = QTimer()
         self.reminder_timer.timeout.connect(self._check_reminders)
         self.reminder_timer.start(30000)  # 每30秒检查
-    
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 0)
@@ -230,21 +235,24 @@ class MemoWidget(QWidget):
         
         top_bar.addStretch()
         
-        # 筛选
-        self.filter_combo = QComboBox()
-        self.filter_combo.addItems(["全部", "未完成", "已完成", "有提醒"])
-        self.filter_combo.setFixedWidth(85)
-        self.filter_combo.setFixedHeight(28)
-        self.filter_combo.setStyleSheet("""
-            QComboBox {
-                border: 1px solid #ddd; border-radius: 4px;
-                padding: 2px 6px; font-size: 11px; background: white;
-            }
-            QComboBox:hover { border-color: #007bff; }
-            QComboBox::drop-down { border: none; width: 16px; }
-        """)
-        self.filter_combo.currentIndexChanged.connect(self._refresh_list)
-        top_bar.addWidget(self.filter_combo)
+        if self.show_filter:
+            # 筛选
+            self.filter_combo = QComboBox()
+            self.filter_combo.addItems(["全部", "未完成", "已完成", "有提醒"])
+            self.filter_combo.setFixedWidth(85)
+            self.filter_combo.setFixedHeight(28)
+            self.filter_combo.setStyleSheet("""
+                QComboBox {
+                    border: 1px solid #ddd; border-radius: 4px;
+                    padding: 2px 6px; font-size: 11px; background: white;
+                }
+                QComboBox:hover { border-color: #007bff; }
+                QComboBox::drop-down { border: none; width: 16px; }
+            """)
+            self.filter_combo.currentIndexChanged.connect(self._refresh_list)
+            top_bar.addWidget(self.filter_combo)
+        else:
+            self.filter_combo = None
         
         # 清理按钮
         clear_btn = QPushButton("🗑️")
@@ -378,25 +386,28 @@ class MemoWidget(QWidget):
             QComboBox::drop-down { border: none; width: 18px; }
         """)
         reminder_layout.addWidget(self.repeat_combo)
-
-        # 多个提醒铃声（可选），默认第一个
-        self.sound_combo = QComboBox()
-        self.sound_combo.addItems([
-            "默认铃声",
-            "清脆铃声",
-            "急促铃声",
-            "静音",
-        ])
-        self.sound_combo.setFixedSize(110, 36)
-        self.sound_combo.setToolTip("提醒铃声")
-        self.sound_combo.setStyleSheet("""
-            QComboBox {
-                border: 1px solid #e0e0e0; border-radius: 6px;
-                padding: 4px 8px; font-size: 13px; background: white;
-            }
-            QComboBox::drop-down { border: none; width: 18px; }
-        """)
-        reminder_layout.addWidget(self.sound_combo)
+ 
+        if self.show_sound:
+            # 多个提醒铃声（可选），默认第一个
+            self.sound_combo = QComboBox()
+            self.sound_combo.addItems([
+                "默认铃声",
+                "清脆铃声",
+                "急促铃声",
+                "静音",
+            ])
+            self.sound_combo.setFixedSize(110, 36)
+            self.sound_combo.setToolTip("提醒铃声")
+            self.sound_combo.setStyleSheet("""
+                QComboBox {
+                    border: 1px solid #e0e0e0; border-radius: 6px;
+                    padding: 4px 8px; font-size: 13px; background: white;
+                }
+                QComboBox::drop-down { border: none; width: 18px; }
+            """)
+            reminder_layout.addWidget(self.sound_combo)
+        else:
+            self.sound_combo = None
         reminder_layout.addStretch()
         
         input_layout.addWidget(self.reminder_row)
@@ -432,7 +443,10 @@ class MemoWidget(QWidget):
             self.reminder_date_edit.setDateTime(init_dt)
             self.reminder_time_edit.setTime(init_dt.time())
             self.repeat_combo.setCurrentIndex(0)
-            self.sound_combo.setCurrentIndex(0)
+            if self.sound_combo:
+                self.sound_combo.setCurrentIndex(0)
+            else:
+                self._last_sound_mode = 0
     
     def _add_item(self):
         content = self.input_edit.text().strip()
@@ -450,7 +464,8 @@ class MemoWidget(QWidget):
             reminder_datetime = base.replace(hour=t.hour(), minute=t.minute(), second=0, microsecond=0)
             repeat_map = {0: "none", 1: "daily", 2: "weekly", 3: "monthly"}
             reminder_repeat = repeat_map.get(self.repeat_combo.currentIndex(), "none")
-            self._last_sound_mode = self.sound_combo.currentIndex()
+            if self.sound_combo:
+                self._last_sound_mode = self.sound_combo.currentIndex()
         
         memo_storage.add_item(
             content=content, priority=priority,
@@ -465,19 +480,23 @@ class MemoWidget(QWidget):
         self.reminder_row.setVisible(False)
         self.reminder_row.setMaximumHeight(0)
         self._refresh_list()
+        self.data_changed.emit()  # 发出数据变更信号
     
     def _refresh_list(self):
         self.list_widget.clear()
         
-        filter_idx = self.filter_combo.currentIndex()
-        if filter_idx == 0:
-            items = memo_storage.get_all_items()
-        elif filter_idx == 1:
-            items = memo_storage.get_pending_items()
-        elif filter_idx == 2:
-            items = memo_storage.get_completed_items()
+        if self.filter_combo is None:
+            items = [i for i in memo_storage.get_pending_items() if i.created_at.date() == self.current_date]
         else:
-            items = [i for i in memo_storage.get_all_items() if i.reminder_enabled]
+            filter_idx = self.filter_combo.currentIndex()
+            if filter_idx == 0:
+                items = memo_storage.get_all_items()
+            elif filter_idx == 1:
+                items = memo_storage.get_pending_items()
+            elif filter_idx == 2:
+                items = memo_storage.get_completed_items()
+            else:
+                items = [i for i in memo_storage.get_all_items() if i.reminder_enabled]
         
         def sort_key(x):
             rt = x.reminder_datetime.timestamp() if x.reminder_datetime else float('inf')
@@ -490,7 +509,10 @@ class MemoWidget(QWidget):
         
         stats = memo_storage.get_statistics()
         reminder_str = f" | ⏰{stats['with_reminder']}" if stats['with_reminder'] > 0 else ""
-        self.stats_label.setText(f"📋 待办 {stats['pending']} | 完成 {stats['completed']}{reminder_str}")
+        if self.filter_combo is None:
+            self.stats_label.setText("📌 今日待办")
+        else:
+            self.stats_label.setText(f"📋 待办 {stats['pending']} | 完成 {stats['completed']}{reminder_str}")
     
     def _add_list_item(self, item: MemoItem):
         widget = QWidget()
@@ -542,7 +564,6 @@ class MemoWidget(QWidget):
             content = content[:26] + "..."
         content_label = QLabel(content)
         content_label.setWordWrap(False)
-        # 让文字无论文本框高度如何都会垂直居中
         content_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         if item.completed:
             content_label.setStyleSheet("""
@@ -594,6 +615,7 @@ class MemoWidget(QWidget):
         reminder_info = QLabel(reminder_text)
         reminder_info.setFixedHeight(16)
         reminder_info.setStyleSheet("font-size: 11px; color: #17a2b8; margin-left: 48px;")
+        reminder_info.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         main_layout.addWidget(reminder_info)
         
         list_item = QListWidgetItem()
@@ -604,10 +626,12 @@ class MemoWidget(QWidget):
     def _toggle_complete(self, item_id: str):
         memo_storage.toggle_complete(item_id)
         self._refresh_list()
+        self.data_changed.emit()  # 发出数据变更信号
     
     def _delete_item(self, item_id: str):
         memo_storage.delete_item(item_id)
         self._refresh_list()
+        self.data_changed.emit()  # 发出数据变更信号
     
     def _edit_reminder(self, item_id: str):
         item = None
@@ -629,6 +653,7 @@ class MemoWidget(QWidget):
                 reminder_repeat=repeat
             )
             self._refresh_list()
+            self.data_changed.emit()  # 发出数据变更信号
     
     def _clear_completed(self):
         count = len(memo_storage.get_completed_items())
@@ -646,6 +671,7 @@ class MemoWidget(QWidget):
         if reply == QMessageBox.StandardButton.Yes:
             memo_storage.clear_completed()
             self._refresh_list()
+            self.data_changed.emit()  # 发出数据变更信号
     
     def _check_reminders(self):
         """检查到期提醒"""
@@ -692,3 +718,23 @@ class MemoWidget(QWidget):
         )
         
         self.reminder_triggered.emit(item.id, item.content)
+
+
+class MemoWidget(BaseMemoWidget):
+    """备忘录组件"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent, show_filter=True, show_sound=True)
+
+
+class TodayMemoWidget(BaseMemoWidget):
+    """日历页嵌入的今日待办，复用备忘录交互"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent, show_filter=False, show_sound=False)
+        self.stats_label.setText("📌 今日待办")
+    
+    def sync_with_date(self, date):
+        """同步到指定日期"""
+        self.current_date = date
+        self._refresh_list()

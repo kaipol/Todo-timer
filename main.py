@@ -51,8 +51,9 @@ def main():
         app_icon = create_app_icon()
     app.setWindowIcon(app_icon)
     
-    # 设置全局字体
-    font = QFont("Segoe UI", 10)
+    # 设置全局字体 - 使用微软雅黑，增大字号
+    font = QFont("Microsoft YaHei", 11)
+    font.setWeight(QFont.Weight.Normal)
     app.setFont(font)
     
     # 创建并显示主窗口

@@ -4,12 +4,15 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                               QPushButton, QFrame, QFileDialog, QColorDialog,
                               QRadioButton, QButtonGroup, QWidget, QSlider,
-                              QCheckBox, QScrollArea, QTabWidget)
-from PyQt6.QtCore import Qt, pyqtSignal
+                              QCheckBox, QScrollArea, QTabWidget, QLineEdit,
+                              QSpinBox, QMessageBox, QListWidget, QListWidgetItem,
+                              QProgressDialog)
+from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer
 from PyQt6.QtGui import QPixmap, QColor, QIcon
 import os
 
 from core.config import app_config
+from core.webdav_sync import webdav_sync
 
 
 class SettingsDialog(QDialog):
@@ -20,7 +23,7 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("设置")
-        self.setFixedSize(480, 620)
+        self.setFixedSize(520, 720)
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowCloseButtonHint)
         
         self._setup_ui()
@@ -55,6 +58,12 @@ class SettingsDialog(QDialog):
         bg_tip = QLabel("设置整个应用窗口的背景（图片/颜色/渐变）")
         bg_tip.setStyleSheet("font-size: 12px; color: #666; margin-bottom: 5px;")
         bg_main_section.layout().addWidget(bg_tip)
+        
+        # 启用全局背景复选框
+        self.global_bg_enable_check = QCheckBox("启用全局背景")
+        self.global_bg_enable_check.setStyleSheet("font-size: 13px; font-weight: bold; color: #495057;")
+        self.global_bg_enable_check.stateChanged.connect(self._on_global_bg_enable_changed)
+        bg_main_section.layout().addWidget(self.global_bg_enable_check)
         
         # 背景类型选择
         self.global_bg_type_group = QButtonGroup(self)
@@ -374,6 +383,155 @@ class SettingsDialog(QDialog):
         icon_section.layout().addLayout(icon_layout)
         scroll_layout.addWidget(icon_section)
         
+        # === WebDAV 同步设置 ===
+        webdav_section = self._create_section("☁️ WebDAV 同步")
+        
+        webdav_tip = QLabel("将待办、计时记录等数据同步到WebDAV服务器")
+        webdav_tip.setStyleSheet("font-size: 12px; color: #666; margin-bottom: 5px;")
+        webdav_section.layout().addWidget(webdav_tip)
+        
+        # 启用开关
+        enable_layout = QHBoxLayout()
+        self.webdav_enable_check = QCheckBox("启用WebDAV同步")
+        self.webdav_enable_check.setStyleSheet("font-size: 13px;")
+        enable_layout.addWidget(self.webdav_enable_check)
+        enable_layout.addStretch()
+        
+        # 同步状态
+        self.sync_status_label = QLabel()
+        self.sync_status_label.setStyleSheet("font-size: 11px; color: #666;")
+        enable_layout.addWidget(self.sync_status_label)
+        webdav_section.layout().addLayout(enable_layout)
+        
+        # 服务器地址
+        server_layout = QHBoxLayout()
+        server_label = QLabel("服务器:")
+        server_label.setFixedWidth(60)
+        server_label.setStyleSheet("font-size: 13px;")
+        server_layout.addWidget(server_label)
+        
+        self.webdav_server_input = QLineEdit()
+        self.webdav_server_input.setPlaceholderText("https://dav.example.com/webdav")
+        self.webdav_server_input.setStyleSheet("""
+            QLineEdit {
+                padding: 6px 10px;
+                border: 1px solid #ddd;
+                border-radius: 6px;
+                font-size: 12px;
+            }
+            QLineEdit:focus {
+                border-color: #007bff;
+            }
+        """)
+        server_layout.addWidget(self.webdav_server_input)
+        webdav_section.layout().addLayout(server_layout)
+        
+        # 用户名
+        user_layout = QHBoxLayout()
+        user_label = QLabel("用户名:")
+        user_label.setFixedWidth(60)
+        user_label.setStyleSheet("font-size: 13px;")
+        user_layout.addWidget(user_label)
+        
+        self.webdav_user_input = QLineEdit()
+        self.webdav_user_input.setPlaceholderText("用户名")
+        self.webdav_user_input.setStyleSheet("""
+            QLineEdit {
+                padding: 6px 10px;
+                border: 1px solid #ddd;
+                border-radius: 6px;
+                font-size: 12px;
+            }
+            QLineEdit:focus {
+                border-color: #007bff;
+            }
+        """)
+        user_layout.addWidget(self.webdav_user_input)
+        webdav_section.layout().addLayout(user_layout)
+        
+        # 密码
+        pass_layout = QHBoxLayout()
+        pass_label = QLabel("密码:")
+        pass_label.setFixedWidth(60)
+        pass_label.setStyleSheet("font-size: 13px;")
+        pass_layout.addWidget(pass_label)
+        
+        self.webdav_pass_input = QLineEdit()
+        self.webdav_pass_input.setPlaceholderText("密码")
+        self.webdav_pass_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.webdav_pass_input.setStyleSheet("""
+            QLineEdit {
+                padding: 6px 10px;
+                border: 1px solid #ddd;
+                border-radius: 6px;
+                font-size: 12px;
+            }
+            QLineEdit:focus {
+                border-color: #007bff;
+            }
+        """)
+        pass_layout.addWidget(self.webdav_pass_input)
+        webdav_section.layout().addLayout(pass_layout)
+        
+        # 远程路径
+        path_layout = QHBoxLayout()
+        path_label = QLabel("远程路径:")
+        path_label.setFixedWidth(60)
+        path_label.setStyleSheet("font-size: 13px;")
+        path_layout.addWidget(path_label)
+        
+        self.webdav_path_input = QLineEdit()
+        self.webdav_path_input.setPlaceholderText("/TimeTracker/")
+        self.webdav_path_input.setStyleSheet("""
+            QLineEdit {
+                padding: 6px 10px;
+                border: 1px solid #ddd;
+                border-radius: 6px;
+                font-size: 12px;
+            }
+            QLineEdit:focus {
+                border-color: #007bff;
+            }
+        """)
+        path_layout.addWidget(self.webdav_path_input)
+        webdav_section.layout().addLayout(path_layout)
+        
+        # 操作按钮
+        webdav_btn_layout = QHBoxLayout()
+        webdav_btn_layout.setSpacing(8)
+        
+        self.test_conn_btn = QPushButton("🔗 测试连接")
+        self.test_conn_btn.clicked.connect(self._test_webdav_connection)
+        
+        self.sync_now_btn = QPushButton("☁️ 立即同步")
+        self.sync_now_btn.clicked.connect(self._sync_now)
+        
+        self.view_backups_btn = QPushButton("📋 查看备份")
+        self.view_backups_btn.clicked.connect(self._view_remote_backups)
+        
+        for btn in [self.test_conn_btn, self.sync_now_btn, self.view_backups_btn]:
+            btn.setStyleSheet("""
+                QPushButton {
+                    padding: 6px 12px;
+                    border: 1px solid #ddd;
+                    border-radius: 6px;
+                    background: white;
+                    font-size: 12px;
+                }
+                QPushButton:hover {
+                    background: #f5f5f5;
+                    border-color: #007bff;
+                }
+            """)
+        
+        webdav_btn_layout.addWidget(self.test_conn_btn)
+        webdav_btn_layout.addWidget(self.sync_now_btn)
+        webdav_btn_layout.addWidget(self.view_backups_btn)
+        webdav_btn_layout.addStretch()
+        webdav_section.layout().addLayout(webdav_btn_layout)
+        
+        scroll_layout.addWidget(webdav_section)
+        
         scroll_layout.addStretch()
         scroll.setWidget(scroll_content)
         layout.addWidget(scroll)
@@ -501,6 +659,9 @@ class SettingsDialog(QDialog):
         self.temp_global_bg_blur = app_config.get('global_bg_blur', 0)
         self.temp_global_bg_opacity = app_config.get('global_bg_opacity', 0.85)
         
+        # 设置启用全局背景复选框状态
+        self.global_bg_enable_check.setChecked(self.temp_global_bg_enabled)
+        
         # 设置UI状态
         if self.temp_global_bg_type == 'image':
             self.global_image_radio.setChecked(True)
@@ -518,6 +679,9 @@ class SettingsDialog(QDialog):
         
         self._on_global_bg_type_changed()
         self._update_global_bg_preview()
+        
+        # 加载WebDAV设置
+        self._load_webdav_settings()
     
     def _update_icon_preview(self):
         """更新图标预览"""
@@ -705,6 +869,10 @@ class SettingsDialog(QDialog):
             self.global_gradient_radio.setChecked(True)
             self._update_global_bg_preview()
     
+    def _on_global_bg_enable_changed(self, state):
+        """全局背景启用状态改变"""
+        self.temp_global_bg_enabled = (state == Qt.CheckState.Checked.value)
+    
     def _on_blur_changed(self, value):
         """模糊度改变"""
         self.temp_global_bg_blur = value
@@ -812,5 +980,331 @@ class SettingsDialog(QDialog):
         app_config.set('global_bg_blur', self.temp_global_bg_blur)
         app_config.set('global_bg_opacity', self.temp_global_bg_opacity)
         
+        # 保存WebDAV设置
+        self._save_webdav_settings()
+        
         self.settings_changed.emit()
         self.accept()
+    
+    # === WebDAV 相关方法 ===
+    
+    def _load_webdav_settings(self):
+        """加载WebDAV设置"""
+        self.webdav_enable_check.setChecked(webdav_sync.get_config('enabled', False))
+        self.webdav_server_input.setText(webdav_sync.get_config('server_url', ''))
+        self.webdav_user_input.setText(webdav_sync.get_config('username', ''))
+        self.webdav_pass_input.setText(webdav_sync.get_config('password', ''))
+        self.webdav_path_input.setText(webdav_sync.get_config('remote_path', '/TimeTracker/'))
+        
+        # 更新同步状态显示
+        self._update_sync_status()
+    
+    def _save_webdav_settings(self):
+        """保存WebDAV设置"""
+        webdav_sync.update_config(
+            enabled=self.webdav_enable_check.isChecked(),
+            server_url=self.webdav_server_input.text().strip(),
+            username=self.webdav_user_input.text().strip(),
+            password=self.webdav_pass_input.text(),
+            remote_path=self.webdav_path_input.text().strip() or '/TimeTracker/'
+        )
+    
+    def _update_sync_status(self):
+        """更新同步状态显示"""
+        sync_info = webdav_sync.get_last_sync_info()
+        if sync_info['last_sync']:
+            status_text = f"上次同步: {sync_info['last_sync_display']}"
+            if sync_info['status'] == 'success':
+                self.sync_status_label.setStyleSheet("font-size: 11px; color: #28a745;")
+            else:
+                self.sync_status_label.setStyleSheet("font-size: 11px; color: #dc3545;")
+        else:
+            status_text = "从未同步"
+            self.sync_status_label.setStyleSheet("font-size: 11px; color: #666;")
+        
+        self.sync_status_label.setText(status_text)
+    
+    def _test_webdav_connection(self):
+        """测试WebDAV连接"""
+        # 先临时保存配置
+        webdav_sync.update_config(
+            server_url=self.webdav_server_input.text().strip(),
+            username=self.webdav_user_input.text().strip(),
+            password=self.webdav_pass_input.text(),
+            remote_path=self.webdav_path_input.text().strip() or '/TimeTracker/'
+        )
+        
+        # 测试连接
+        self.test_conn_btn.setEnabled(False)
+        self.test_conn_btn.setText("测试中...")
+        
+        # 使用QTimer延迟执行，避免UI卡顿
+        QTimer.singleShot(100, self._do_test_connection)
+    
+    def _do_test_connection(self):
+        """执行连接测试"""
+        try:
+            success, msg = webdav_sync.test_connection()
+            
+            if success:
+                QMessageBox.information(self, "连接成功", "✅ WebDAV服务器连接成功！")
+            else:
+                QMessageBox.warning(self, "连接失败", f"❌ 连接失败:\n{msg}")
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"测试连接时发生错误:\n{str(e)}")
+        finally:
+            self.test_conn_btn.setEnabled(True)
+            self.test_conn_btn.setText("🔗 测试连接")
+    
+    def _sync_now(self):
+        """立即同步"""
+        # 先保存当前配置
+        self._save_webdav_settings()
+        
+        if not webdav_sync.is_configured():
+            QMessageBox.warning(self, "未配置", "请先配置WebDAV服务器信息并启用同步")
+            return
+        
+        # 确认同步
+        reply = QMessageBox.question(
+            self, "确认同步",
+            "将把本地数据打包为ZIP并上传到WebDAV服务器。\n\n继续吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        # 执行同步
+        self.sync_now_btn.setEnabled(False)
+        self.sync_now_btn.setText("同步中...")
+        
+        QTimer.singleShot(100, self._do_sync)
+    
+    def _do_sync(self):
+        """执行同步"""
+        try:
+            success, msg = webdav_sync.upload_backup()
+            
+            if success:
+                QMessageBox.information(self, "同步成功", f"✅ {msg}")
+            else:
+                QMessageBox.warning(self, "同步失败", f"❌ {msg}")
+            
+            self._update_sync_status()
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"同步时发生错误:\n{str(e)}")
+        finally:
+            self.sync_now_btn.setEnabled(True)
+            self.sync_now_btn.setText("☁️ 立即同步")
+    
+    def _view_remote_backups(self):
+        """查看远程备份"""
+        # 先保存当前配置
+        self._save_webdav_settings()
+        
+        if not webdav_sync.is_configured():
+            QMessageBox.warning(self, "未配置", "请先配置WebDAV服务器信息并启用同步")
+            return
+        
+        # 显示备份列表对话框
+        dialog = BackupListDialog(self)
+        dialog.exec()
+
+
+class BackupListDialog(QDialog):
+    """备份列表对话框"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("远程备份列表")
+        self.setFixedSize(450, 400)
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowCloseButtonHint)
+        
+        self._setup_ui()
+        self._load_backups()
+    
+    def _setup_ui(self):
+        """设置UI"""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(10)
+        
+        # 标题
+        title = QLabel("📋 远程备份列表")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #2c3e50;")
+        layout.addWidget(title)
+        
+        # 提示
+        tip = QLabel("选择一个备份可以下载并恢复数据")
+        tip.setStyleSheet("font-size: 12px; color: #666;")
+        layout.addWidget(tip)
+        
+        # 备份列表
+        self.backup_list = QListWidget()
+        self.backup_list.setStyleSheet("""
+            QListWidget {
+                background-color: #f8f9fa;
+                border: 1px solid #ddd;
+                border-radius: 8px;
+                padding: 5px;
+                font-size: 13px;
+            }
+            QListWidget::item {
+                background-color: white;
+                border-radius: 6px;
+                margin: 3px 0;
+                padding: 10px;
+            }
+            QListWidget::item:hover {
+                background-color: #e9ecef;
+            }
+            QListWidget::item:selected {
+                background-color: #d0e8ff;
+                color: #333;
+            }
+        """)
+        layout.addWidget(self.backup_list)
+        
+        # 按钮
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+        
+        self.refresh_btn = QPushButton("🔄 刷新")
+        self.refresh_btn.clicked.connect(self._load_backups)
+        
+        self.restore_btn = QPushButton("📥 恢复选中")
+        self.restore_btn.clicked.connect(self._restore_selected)
+        
+        self.close_btn = QPushButton("关闭")
+        self.close_btn.clicked.connect(self.close)
+        
+        for btn in [self.refresh_btn, self.restore_btn, self.close_btn]:
+            btn.setStyleSheet("""
+                QPushButton {
+                    padding: 8px 16px;
+                    border: 1px solid #ddd;
+                    border-radius: 6px;
+                    background: white;
+                    font-size: 13px;
+                }
+                QPushButton:hover {
+                    background: #f5f5f5;
+                    border-color: #007bff;
+                }
+            """)
+        
+        self.restore_btn.setStyleSheet("""
+            QPushButton {
+                padding: 8px 16px;
+                border: none;
+                border-radius: 6px;
+                background: #007bff;
+                color: white;
+                font-size: 13px;
+            }
+            QPushButton:hover {
+                background: #0056b3;
+            }
+        """)
+        
+        btn_layout.addWidget(self.refresh_btn)
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.restore_btn)
+        btn_layout.addWidget(self.close_btn)
+        layout.addLayout(btn_layout)
+        
+        # 存储备份数据
+        self.backups = []
+    
+    def _load_backups(self):
+        """加载备份列表"""
+        self.backup_list.clear()
+        self.backups = []
+        
+        self.refresh_btn.setEnabled(False)
+        self.refresh_btn.setText("加载中...")
+        
+        QTimer.singleShot(100, self._do_load_backups)
+    
+    def _do_load_backups(self):
+        """执行加载备份"""
+        try:
+            success, msg, backups = webdav_sync.list_remote_backups()
+            
+            if success:
+                self.backups = backups
+                
+                if backups:
+                    for backup in backups:
+                        item = QListWidgetItem(
+                            f"📦 {backup['filename']}\n    🕐 {backup['display_time']}"
+                        )
+                        item.setData(Qt.ItemDataRole.UserRole, backup['filename'])
+                        self.backup_list.addItem(item)
+                else:
+                    self.backup_list.addItem(QListWidgetItem("📭 暂无备份"))
+            else:
+                self.backup_list.addItem(QListWidgetItem(f"❌ 加载失败: {msg}"))
+        except Exception as e:
+            self.backup_list.addItem(QListWidgetItem(f"❌ 错误: {str(e)}"))
+        finally:
+            self.refresh_btn.setEnabled(True)
+            self.refresh_btn.setText("🔄 刷新")
+    
+    def _restore_selected(self):
+        """恢复选中的备份"""
+        current_item = self.backup_list.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "提示", "请先选择一个备份")
+            return
+        
+        filename = current_item.data(Qt.ItemDataRole.UserRole)
+        if not filename:
+            return
+        
+        # 确认恢复
+        reply = QMessageBox.warning(
+            self, "确认恢复",
+            f"确定要从备份恢复数据吗？\n\n备份文件: {filename}\n\n⚠️ 这将覆盖当前的本地数据！\n恢复后需要重启应用才能生效。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        # 执行恢复
+        self.restore_btn.setEnabled(False)
+        self.restore_btn.setText("恢复中...")
+        
+        QTimer.singleShot(100, lambda: self._do_restore(filename))
+    
+    def _do_restore(self, filename):
+        """执行恢复"""
+        try:
+            # 下载备份
+            success, msg, local_path = webdav_sync.download_backup(filename)
+            
+            if not success:
+                QMessageBox.warning(self, "下载失败", f"❌ {msg}")
+                return
+            
+            # 恢复数据
+            success, msg = webdav_sync.restore_from_backup(local_path)
+            
+            if success:
+                QMessageBox.information(
+                    self, "恢复成功",
+                    f"✅ {msg}\n\n请重启应用以加载恢复的数据。"
+                )
+                self.close()
+            else:
+                QMessageBox.warning(self, "恢复失败", f"❌ {msg}")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"恢复时发生错误:\n{str(e)}")
+        finally:
+            self.restore_btn.setEnabled(True)
+            self.restore_btn.setText("📥 恢复选中")

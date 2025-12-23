@@ -1,16 +1,64 @@
 """
 应用监控模块 - 负责监控前台应用使用时间
 支持窗口标题追踪（浏览器标签页、聊天窗口等）
+
+性能优化:
+- 预编译正则表达式
+- 进程信息缓存
+- 减少重复的系统调用
 """
 import time
 import re
 from datetime import datetime
+from functools import lru_cache
 import psutil
 import win32gui
 import win32process
 import win32con
 from PyQt6.QtCore import pyqtSignal, QThread
 
+
+# 预编译的正则表达式（避免每次调用时重新编译）
+_CHAT_GROUP_PATTERN = re.compile(r'^(.+?)\(\d+\)$')
+_DOMAIN_PATTERNS = [
+    (re.compile(r'bilibili', re.IGNORECASE), 'bilibili.com'),
+    (re.compile(r'哔哩哔哩'), 'bilibili.com'),
+    (re.compile(r'YouTube', re.IGNORECASE), 'youtube.com'),
+    (re.compile(r'知乎'), 'zhihu.com'),
+    (re.compile(r'百度'), 'baidu.com'),
+    (re.compile(r'Google', re.IGNORECASE), 'google.com'),
+    (re.compile(r'GitHub', re.IGNORECASE), 'github.com'),
+    (re.compile(r'Stack Overflow', re.IGNORECASE), 'stackoverflow.com'),
+    (re.compile(r'微博'), 'weibo.com'),
+    (re.compile(r'淘宝'), 'taobao.com'),
+    (re.compile(r'京东'), 'jd.com'),
+    (re.compile(r'抖音'), 'douyin.com'),
+    (re.compile(r'今日头条'), 'toutiao.com'),
+    (re.compile(r'网易'), '163.com'),
+    (re.compile(r'腾讯'), 'qq.com'),
+    (re.compile(r'CSDN', re.IGNORECASE), 'csdn.net'),
+    (re.compile(r'掘金'), 'juejin.cn'),
+    (re.compile(r'简书'), 'jianshu.com'),
+]
+
+# 浏览器后缀列表（使用元组提高查找效率）
+_BROWSER_SUFFIXES = (
+    ' - Google Chrome', ' - Mozilla Firefox', ' - Microsoft Edge',
+    ' - Opera', ' - Brave', ' — Mozilla Firefox', ' - 360安全浏览器',
+    ' - QQ浏览器', ' - 搜狗浏览器', ' - Chromium'
+)
+
+# 聊天软件主窗口标题集合（使用frozenset提高查找效率）
+_CHAT_MAIN_TITLES = frozenset([
+    '微信', 'WeChat', 'QQ', 'TIM', 'Telegram', 'Discord', 'Slack',
+    '钉钉', '企业微信', '飞书', 'Feishu', 'DingTalk', 'WeCom'
+])
+
+# 编辑器后缀列表
+_EDITOR_SUFFIXES = (
+    ' - Visual Studio', ' - IntelliJ IDEA', ' - PyCharm',
+    ' - WebStorm', ' - Sublime Text', ' - Notepad++'
+)
 
 # 需要追踪子窗口的应用配置
 # key: 进程名(小写), value: {'type': 类型, 'extract': 提取函数名}
@@ -46,50 +94,24 @@ TRACKED_APPS = {
 
 
 def extract_browser_info(window_title):
-    """从浏览器窗口标题提取网站信息"""
+    """从浏览器窗口标题提取网站信息
+    
+    使用预编译的正则表达式和元组来提高性能
+    """
     if not window_title:
         return None, None
     
-    # 常见浏览器标题格式: "页面标题 - 浏览器名称" 或 "页面标题 — 浏览器名称"
-    # 移除浏览器名称后缀
-    browser_suffixes = [
-        ' - Google Chrome', ' - Mozilla Firefox', ' - Microsoft Edge',
-        ' - Opera', ' - Brave', ' — Mozilla Firefox', ' - 360安全浏览器',
-        ' - QQ浏览器', ' - 搜狗浏览器', ' - Chromium'
-    ]
-    
+    # 使用预编译的后缀列表
     title = window_title
-    for suffix in browser_suffixes:
+    for suffix in _BROWSER_SUFFIXES:
         if title.endswith(suffix):
             title = title[:-len(suffix)]
             break
     
-    # 尝试从标题提取域名（如果标题包含URL特征）
+    # 使用预编译的正则表达式匹配域名
     domain = None
-    # 检查是否是常见网站的标题模式
-    domain_patterns = [
-        (r'bilibili', 'bilibili.com'),
-        (r'哔哩哔哩', 'bilibili.com'),
-        (r'YouTube', 'youtube.com'),
-        (r'知乎', 'zhihu.com'),
-        (r'百度', 'baidu.com'),
-        (r'Google', 'google.com'),
-        (r'GitHub', 'github.com'),
-        (r'Stack Overflow', 'stackoverflow.com'),
-        (r'微博', 'weibo.com'),
-        (r'淘宝', 'taobao.com'),
-        (r'京东', 'jd.com'),
-        (r'抖音', 'douyin.com'),
-        (r'今日头条', 'toutiao.com'),
-        (r'网易', '163.com'),
-        (r'腾讯', 'qq.com'),
-        (r'CSDN', 'csdn.net'),
-        (r'掘金', 'juejin.cn'),
-        (r'简书', 'jianshu.com'),
-    ]
-    
-    for pattern, dom in domain_patterns:
-        if re.search(pattern, title, re.IGNORECASE):
+    for pattern, dom in _DOMAIN_PATTERNS:
+        if pattern.search(title):
             domain = dom
             break
     
@@ -97,32 +119,27 @@ def extract_browser_info(window_title):
 
 
 def extract_chat_info(window_title, app_type):
-    """从聊天软件窗口标题提取聊天对象"""
+    """从聊天软件窗口标题提取聊天对象
+    
+    使用预编译的正则表达式和frozenset来提高性能
+    """
     if not window_title:
         return None
     
     title = window_title.strip()
     
-    # 微信: 标题通常就是聊天对象名称，或者是"微信"
-    # QQ: 标题通常是 "聊天对象名称" 或 "QQ"
-    # 过滤掉主窗口标题
-    main_window_titles = [
-        '微信', 'WeChat', 'QQ', 'TIM', 'Telegram', 'Discord', 'Slack',
-        '钉钉', '企业微信', '飞书', 'Feishu', 'DingTalk', 'WeCom'
-    ]
-    
-    if title in main_window_titles:
+    # 使用预编译的frozenset进行O(1)查找
+    if title in _CHAT_MAIN_TITLES:
         return '主界面'
     
     # 提取聊天对象（去除可能的后缀）
     # QQ格式可能是 "好友名称 - QQ"
     if ' - ' in title:
         parts = title.split(' - ')
-        # 通常第一部分是聊天对象
         return parts[0].strip()
     
-    # 微信的群聊可能带有人数 "群名称(123)"
-    match = re.match(r'^(.+?)\(\d+\)$', title)
+    # 使用预编译的正则表达式匹配群聊
+    match = _CHAT_GROUP_PATTERN.match(title)
     if match:
         return match.group(1).strip()
     
@@ -130,7 +147,10 @@ def extract_chat_info(window_title, app_type):
 
 
 def extract_editor_info(window_title):
-    """从编辑器窗口标题提取文件/项目信息"""
+    """从编辑器窗口标题提取文件/项目信息
+    
+    使用预编译的后缀列表来提高性能
+    """
     if not window_title:
         return None
     
@@ -145,13 +165,8 @@ def extract_editor_info(window_title):
             return f"{parts[0]} ({parts[1]})"  # 文件名 (项目名)
         return parts[0] if parts else title
     
-    # 其他编辑器类似处理
-    editor_suffixes = [
-        ' - Visual Studio', ' - IntelliJ IDEA', ' - PyCharm',
-        ' - WebStorm', ' - Sublime Text', ' - Notepad++'
-    ]
-    
-    for suffix in editor_suffixes:
+    # 使用预编译的后缀列表
+    for suffix in _EDITOR_SUFFIXES:
         if suffix in title:
             return title.split(suffix)[0].strip()
     

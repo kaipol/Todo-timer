@@ -17,11 +17,12 @@ from PyQt6.QtGui import QFont, QIcon, QPixmap, QPainter, QBrush, QPalette
 
 from core.monitor import AppMonitor
 from core.config import app_config
-from core.storage import timer_storage, TimerRecord, app_usage_storage, memo_storage
+from core.storage import timer_storage, TimerRecord, app_usage_storage, memo_storage, diary_storage
 from core.utils import get_icon_from_exe, format_time
 from ui.widgets import MiniWindow, AppListItem
 from ui.settings_dialog import SettingsDialog
-from ui.memo_widget import MemoWidget, ReminderDialog
+from ui.memo_widget import MemoWidget, ReminderDialog, TodayMemoWidget
+from ui.diary import DiaryWidget, TodayDiaryWidget
 
 
 class MainWindow(QMainWindow):
@@ -240,11 +241,20 @@ class MainWindow(QMainWindow):
         self.memo_widget = MemoWidget()
         self.right_tabs.addTab(self.memo_widget, "📋 备忘录")
 
+        # 日记标签页
+        self.diary_widget = DiaryWidget()
+        self.right_tabs.addTab(self.diary_widget, "📔 日记")
+
         # 周统计标签页
         weekly_tab = self._create_weekly_tab()
         self.right_tabs.addTab(weekly_tab, "📊 周统计")
         
         layout.addWidget(self.right_tabs)
+        
+        # 连接数据变更信号，实现今日待办与备忘录的同步
+        self.today_memo_widget.data_changed.connect(self.memo_widget._refresh_list)
+        self.memo_widget.data_changed.connect(self.today_memo_widget._refresh_list)
+        
         return panel
 
     def _setup_current_app_area(self, parent_layout):
@@ -336,7 +346,7 @@ class MainWindow(QMainWindow):
             font-size: 42px;
             font-weight: bold;
             color: white;
-            font-family: 'Segoe UI', 'Arial', sans-serif;
+            font-family: 'Microsoft YaHei', 'Arial', sans-serif;
         """)
         timer_layout.addWidget(self.countdown_label)
         
@@ -775,33 +785,10 @@ class MainWindow(QMainWindow):
         self.day_detail_tabs.currentChanged.connect(lambda idx: self._refresh_today_todo_tab())
 
         # Tab 1：今日应用（沿用原 day_records_list）
-        today_apps_wrapper = QWidget()
-        today_apps_layout = QVBoxLayout(today_apps_wrapper)
-        today_apps_layout.setContentsMargins(6, 6, 6, 6)
-        today_apps_layout.setSpacing(8)
-
-        apps_hint = QLabel("查看当前日期的计时记录和应用使用")
-        apps_hint.setStyleSheet("font-size: 12px; color: #888;")
-        today_apps_layout.addWidget(apps_hint)
         apps_tab = QWidget()
         apps_layout = QVBoxLayout(apps_tab)
         apps_layout.setContentsMargins(10, 6, 10, 10)
-        apps_layout.setSpacing(6)
-
-        info_bar = QHBoxLayout()
-        info_badge = QLabel("📊")
-        info_badge.setFixedSize(26, 26)
-        info_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        info_badge.setStyleSheet("background:#eef5ff;border-radius:13px;font-size:14px;")
-        info_bar.addWidget(info_badge)
-
-        info_text = QLabel("今日记录概览 · 长按 Tab 可以拖拽排序")
-        info_text.setStyleSheet("font-size: 12px; color: #6c757d;")
-        info_bar.addWidget(info_text)
-        info_bar.addStretch()
-        apps_layout.addLayout(info_bar)
-
-        apps_layout.addWidget(today_apps_wrapper)
+        apps_layout.setSpacing(10)
 
         self.day_records_list = QListWidget()
         self.day_records_list.setStyleSheet("""
@@ -837,38 +824,21 @@ class MainWindow(QMainWindow):
         todos_layout.setContentsMargins(0, 0, 0, 0)
         todos_layout.setSpacing(8)
 
-        self.today_todo_header = QLabel("📌 今日待办")
-        self.today_todo_header.setStyleSheet("font-size: 13px; color: #666; font-weight: bold; padding: 6px 8px;")
-        todos_layout.addWidget(self.today_todo_header)
+        self.today_memo_widget = TodayMemoWidget()
+        todos_layout.addWidget(self.today_memo_widget)
 
-        self.today_todo_list = QListWidget()
-        self.today_todo_list.setStyleSheet("""
-            QListWidget {
-                background-color: #f8f9fa;
-                border: none;
-                border-radius: 10px;
-                padding: 8px;
-                font-size: 14px;
-            }
-            QListWidget::item {
-                background-color: white;
-                border-radius: 8px;
-                margin: 3px 0;
-                padding: 10px 12px;
-                color: #333;
-            }
-            QListWidget::item:hover {
-                background-color: #e9ecef;
-            }
-        """)
-        self.today_todo_list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
-        # 单击：勾选完成；双击：打开提醒设置（复用备忘录里的设置提醒对话框）
-        self.today_todo_list.itemClicked.connect(self._toggle_today_todo_complete)
-        self.today_todo_list.itemDoubleClicked.connect(self._edit_today_todo)
-        todos_layout.addWidget(self.today_todo_list)
+        # Tab 3：今日日记
+        diary_tab = QWidget()
+        diary_layout = QVBoxLayout(diary_tab)
+        diary_layout.setContentsMargins(0, 0, 0, 0)
+        diary_layout.setSpacing(8)
+
+        self.today_diary_widget = TodayDiaryWidget()
+        diary_layout.addWidget(self.today_diary_widget)
 
         self.day_detail_tabs.addTab(apps_tab, "📱 今日应用")
         self.day_detail_tabs.addTab(todos_tab, "📌 今日待办")
+        self.day_detail_tabs.addTab(diary_tab, "📔 今日日记")
         self.day_detail_tabs.setCurrentIndex(0)
 
         parent_layout.addWidget(self.day_detail_tabs)
@@ -876,72 +846,20 @@ class MainWindow(QMainWindow):
         self._load_day_records(self.current_date)
 
     def _refresh_today_todo_tab(self):
-        """切换到『今日待办』Tab 时刷新数据"""
-        if not hasattr(self, 'day_detail_tabs') or not hasattr(self, 'today_todo_list'):
+        """切换Tab时刷新数据"""
+        if not hasattr(self, 'day_detail_tabs'):
             return
-        # Tab index 1 = 今日待办
-        if self.day_detail_tabs.currentIndex() != 1:
-            return
-        self._load_today_todos(datetime.now().date())
-    
-    def _load_today_todos(self, date):
-        """加载指定日期对应的待办（当前按“创建日期”归属）"""
-        if not hasattr(self, 'today_todo_list'):
-            return
+        
+        current_index = self.day_detail_tabs.currentIndex()
+        
+        # 今日待办
+        if current_index == 1 and hasattr(self, 'today_memo_widget'):
+            self.today_memo_widget.sync_with_date(datetime.now().date())
+        
+        # 今日日记
+        if current_index == 2 and hasattr(self, 'today_diary_widget'):
+            self.today_diary_widget.refresh()
 
-        self.today_todo_list.clear()
-
-        pending = [item for item in memo_storage.get_pending_items() if item.created_at.date() == date]
-        if not pending:
-            self.today_todo_list.addItem(QListWidgetItem("📭 暂无待办"))
-            return
-
-        for it in pending:
-            icon = it.get_priority_icon()
-            reminder = it.format_reminder_time()
-            text = f"{icon} {it.content}" + (f"   {reminder}" if reminder else "")
-            list_item = QListWidgetItem(text)
-            list_item.setToolTip(it.content)
-            list_item.setData(Qt.ItemDataRole.UserRole, it.id)
-            self.today_todo_list.addItem(list_item)
-
-    def _edit_today_todo(self, list_item: QListWidgetItem):
-        """在日历页的『今日待办』Tab 里编辑/勾选/设置提醒"""
-        if not list_item:
-            return
-        item_id = list_item.data(Qt.ItemDataRole.UserRole)
-        if not item_id:
-            return
-
-        target = None
-        for it in memo_storage.items:
-            if it.id == item_id:
-                target = it
-                break
-        if not target:
-            return
-
-        from ui.memo_widget import ReminderDialog
-
-        dialog = ReminderDialog(self, target)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            enabled, dt, repeat = dialog.get_values()
-            memo_storage.update_item(
-                item_id,
-                reminder_enabled=enabled,
-                reminder_datetime=dt,
-                reminder_repeat=repeat,
-            )
-            self._load_today_todos(datetime.now().date())
-
-    def _toggle_today_todo_complete(self, list_item: QListWidgetItem):
-        if not list_item:
-            return
-        item_id = list_item.data(Qt.ItemDataRole.UserRole)
-        if not item_id:
-            return
-        memo_storage.toggle_complete(item_id)
-        self._load_today_todos(datetime.now().date())
 
     def _load_day_records(self, date):
         """加载日期记录"""
@@ -955,8 +873,11 @@ class MainWindow(QMainWindow):
         weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
         self.day_records_label.setText(f"📅 {date_str} {weekdays[date.weekday()]}")
 
-        # 同步刷新待办 Tab（无论当前显示哪个 Tab，保持数据最新）
-        self._load_today_todos(date if date == datetime.now().date() else datetime.now().date())
+        # 同步刷新待办和日记 Tab（无论当前显示哪个 Tab，保持数据最新）
+        if hasattr(self, 'today_memo_widget'):
+            self.today_memo_widget.sync_with_date(datetime.now().date())
+        if hasattr(self, 'today_diary_widget'):
+            self.today_diary_widget.refresh()
         
         self.day_records_list.clear()
         
@@ -1172,11 +1093,19 @@ class MainWindow(QMainWindow):
         # 记录展开状态
         self.weekly_expanded_items = set()
         
+        # 防止频繁刷新的标志和时间戳
+        self._weekly_last_interaction = 0  # 上次用户交互的时间戳
+        self._weekly_interaction_cooldown = 2.0  # 用户交互后的冷却时间（秒）
+        
         self._load_weekly_data()
         return tab
     
-    def _load_weekly_data(self):
-        """加载周数据"""
+    def _load_weekly_data(self, force_rebuild=False):
+        """加载周数据
+        
+        Args:
+            force_rebuild: 是否强制重建树（切换周时使用）
+        """
         week_end = self.week_start + timedelta(days=6)
         today = datetime.now().date()
         current_week = today - timedelta(days=today.weekday())
@@ -1216,13 +1145,25 @@ class MainWindow(QMainWindow):
         avg_str = f"{avg_h}h{avg_m}m" if avg_h else f"{avg_m}m"
         self.weekly_count_label.setText(f"{timer_summary['total_count']}次 · 日均 {avg_str}")
         
+        weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+        top_apps = app_summary.get('top_apps', [])
+        
+        # 检查是否需要重建树（树为空或强制重建）
+        need_rebuild = force_rebuild or self.weekly_tree.topLevelItemCount() == 0
+        
+        if need_rebuild:
+            # 完全重建树
+            self._rebuild_weekly_tree(app_summary, timer_summary, weekdays, top_apps, today)
+        else:
+            # 增量更新现有项目
+            self._update_weekly_tree(app_summary, timer_summary, weekdays, top_apps, today)
+    
+    def _rebuild_weekly_tree(self, app_summary, timer_summary, weekdays, top_apps, today):
+        """完全重建周统计树"""
         # 阻塞信号以防止在重建树时触发展开/折叠事件
         self.weekly_tree.blockSignals(True)
         
-        # 每日详情（可展开的树形结构）
         self.weekly_tree.clear()
-        weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
-        top_apps = app_summary.get('top_apps', [])
         
         for i in range(7):
             day = self.week_start + timedelta(days=i)
@@ -1265,38 +1206,8 @@ class MainWindow(QMainWindow):
             day_item = QTreeWidgetItem([text])
             day_item.setData(0, Qt.ItemDataRole.UserRole, day_key)  # 存储日期key
             
-            # 添加子节点 - 应用使用（直接列出，不显示标题）
-            daily_summary = app_usage_storage.get_daily_summary(day)
-            app_records = daily_summary.get('records', [])
-            if app_records:
-                for app_record in app_records[:5]:
-                    name = app_record.app_name
-                    if len(name) > 15:
-                        name = name[:12] + "..."
-                    time_str = app_record.format_time()
-                    exe_path = app_record.exe_path
-                    child = QTreeWidgetItem([f"    📱 {name} | {time_str}"])
-                    child.setToolTip(0, app_record.app_name)
-                    
-                    # 添加应用图标
-                    if exe_path:
-                        if exe_path not in self.icon_cache:
-                            self.icon_cache[exe_path] = get_icon_from_exe(exe_path)
-                        icon = self.icon_cache.get(exe_path)
-                        if icon:
-                            child.setIcon(0, QIcon(icon))
-                    
-                    day_item.addChild(child)
-            
-            # 添加子节点 - 计时记录（直接列出，不显示标题）
-            timer_records = timer_storage.get_records_by_date(day)
-            if timer_records:
-                for r in reversed(timer_records[-5:]):
-                    note = r.note if r.note else "无备注"
-                    if len(note) > 12:
-                        note = note[:10] + "..."
-                    child = QTreeWidgetItem([f"    {r.get_mode_icon()} {r.format_time()} | {r.format_duration()} | {note}"])
-                    day_item.addChild(child)
+            # 添加子节点
+            self._add_day_children(day_item, day)
             
             self.weekly_tree.addTopLevelItem(day_item)
             
@@ -1310,13 +1221,101 @@ class MainWindow(QMainWindow):
             arrow = "▼" if is_top_expanded else "▶"
             top_item = QTreeWidgetItem([f"{arrow} 📱 本周Top应用"])
             top_item.setData(0, Qt.ItemDataRole.UserRole, "top_apps")
-            for app in top_apps[:5]:
-                name = app['name']
-                exe_path = app.get('exe_path', '')
+            
+            self._add_top_apps_children(top_item, top_apps)
+            
+            top_item.setExpanded(is_top_expanded)
+            self.weekly_tree.addTopLevelItem(top_item)
+        
+        # 解除信号阻塞
+        self.weekly_tree.blockSignals(False)
+    
+    def _update_weekly_tree(self, app_summary, timer_summary, weekdays, top_apps, today):
+        """增量更新周统计树（不重建，只更新文本和子节点）"""
+        # 阻塞信号
+        self.weekly_tree.blockSignals(True)
+        
+        for i in range(7):
+            day = self.week_start + timedelta(days=i)
+            day_key = day.strftime('%Y-%m-%d')
+            
+            # 查找对应的树项目
+            day_item = self.weekly_tree.topLevelItem(i)
+            if not day_item:
+                continue
+            
+            # 应用使用统计
+            app_daily = app_summary.get('daily_totals', {}).get(day, {'total_time': 0})
+            app_d = app_daily.get('total_time', 0)
+            
+            # 计时统计
+            timer_stats = timer_summary['daily_stats'].get(day, {'duration': 0, 'count': 0})
+            timer_d, timer_c = timer_stats['duration'], timer_stats['count']
+            
+            # 格式化应用时间
+            if app_d > 0:
+                h, m = app_d // 3600, (app_d % 3600) // 60
+                app_str = f"📱{h}h{m}m" if h else f"📱{m}m"
+            else:
+                app_str = "📱-"
+            
+            # 格式化计时时间
+            if timer_d > 0:
+                h, m = timer_d // 3600, (timer_d % 3600) // 60
+                timer_str = f"🍅{h}h{m}m" if h else f"🍅{m}m"
+            else:
+                timer_str = "🍅-"
+            
+            day_str = f"{weekdays[i]} ({day.strftime('%m/%d')})"
+            
+            # 保持当前展开状态
+            is_expanded = day_item.isExpanded()
+            arrow = "▼" if is_expanded else "▶"
+            
+            text = f"{arrow} {day_str}  {app_str}  {timer_str}"
+            
+            if day == today:
+                text = f"🔹 {arrow} {day_str}  {app_str}  {timer_str}"
+            
+            # 更新父节点文本
+            day_item.setText(0, text)
+            
+            # 更新子节点（清除并重新添加）
+            while day_item.childCount() > 0:
+                day_item.removeChild(day_item.child(0))
+            self._add_day_children(day_item, day)
+        
+        # 更新本周Top应用（如果存在）
+        top_item_index = self.weekly_tree.topLevelItemCount() - 1
+        if top_item_index >= 7:
+            top_item = self.weekly_tree.topLevelItem(top_item_index)
+            if top_item and top_item.data(0, Qt.ItemDataRole.UserRole) == "top_apps":
+                is_expanded = top_item.isExpanded()
+                arrow = "▼" if is_expanded else "▶"
+                top_item.setText(0, f"{arrow} 📱 本周Top应用")
+                
+                # 更新子节点
+                while top_item.childCount() > 0:
+                    top_item.removeChild(top_item.child(0))
+                self._add_top_apps_children(top_item, top_apps)
+        
+        # 解除信号阻塞
+        self.weekly_tree.blockSignals(False)
+    
+    def _add_day_children(self, day_item, day):
+        """为日期项添加子节点"""
+        # 添加子节点 - 应用使用（直接列出，不显示标题）
+        daily_summary = app_usage_storage.get_daily_summary(day)
+        app_records = daily_summary.get('records', [])
+        if app_records:
+            for app_record in app_records[:5]:
+                name = app_record.app_name
                 if len(name) > 15:
                     name = name[:12] + "..."
-                child = QTreeWidgetItem([f"    {name} | {app['time_str']}"])
-                child.setToolTip(0, app['name'])
+                time_str = app_record.format_time()
+                exe_path = app_record.exe_path
+                child = QTreeWidgetItem([f"    📱 {name} | {time_str}"])
+                child.setToolTip(0, app_record.app_name)
                 
                 # 添加应用图标
                 if exe_path:
@@ -1326,16 +1325,42 @@ class MainWindow(QMainWindow):
                     if icon:
                         child.setIcon(0, QIcon(icon))
                 
-                top_item.addChild(child)
-            
-            top_item.setExpanded(is_top_expanded)
-            self.weekly_tree.addTopLevelItem(top_item)
+                day_item.addChild(child)
         
-        # 解除信号阻塞
-        self.weekly_tree.blockSignals(False)
+        # 添加子节点 - 计时记录（直接列出，不显示标题）
+        timer_records = timer_storage.get_records_by_date(day)
+        if timer_records:
+            for r in reversed(timer_records[-5:]):
+                note = r.note if r.note else "无备注"
+                if len(note) > 12:
+                    note = note[:10] + "..."
+                child = QTreeWidgetItem([f"    {r.get_mode_icon()} {r.format_time()} | {r.format_duration()} | {note}"])
+                day_item.addChild(child)
+    
+    def _add_top_apps_children(self, top_item, top_apps):
+        """为本周Top应用项添加子节点"""
+        for app in top_apps[:5]:
+            name = app['name']
+            exe_path = app.get('exe_path', '')
+            if len(name) > 15:
+                name = name[:12] + "..."
+            child = QTreeWidgetItem([f"    {name} | {app['time_str']}"])
+            child.setToolTip(0, app['name'])
+            
+            # 添加应用图标
+            if exe_path:
+                if exe_path not in self.icon_cache:
+                    self.icon_cache[exe_path] = get_icon_from_exe(exe_path)
+                icon = self.icon_cache.get(exe_path)
+                if icon:
+                    child.setIcon(0, QIcon(icon))
+            
+            top_item.addChild(child)
     
     def _on_weekly_item_clicked(self, item, column):
         """周统计项目点击事件 - 实现单击展开/折叠"""
+        import time
+        
         # 只处理顶级项目
         if item.parent() is not None:
             return
@@ -1344,10 +1369,31 @@ class MainWindow(QMainWindow):
         if item.childCount() <= 0:
             return
 
-        # 避免“展开后又立刻关闭”：延迟到当前事件循环结束再切换展开状态
-        # （某些情况下点击会引起 selection/pressed/repaint 的连锁信号，直接 setExpanded 会被后续事件覆盖）
+        # 记录用户交互时间，防止 update_ui 立即刷新导致折叠
+        self._weekly_last_interaction = time.time()
+
+        # 获取目标展开状态
         target_state = not item.isExpanded()
-        QTimer.singleShot(0, lambda it=item, s=target_state: it.setExpanded(s))
+        day_key = item.data(0, Qt.ItemDataRole.UserRole)
+        
+        # 立即更新展开状态记录（在设置展开之前），防止 _load_weekly_data 刷新时状态丢失
+        if day_key:
+            if target_state:
+                self.weekly_expanded_items.add(day_key)
+            else:
+                self.weekly_expanded_items.discard(day_key)
+        
+        # 更新箭头图标
+        text = item.text(0)
+        if target_state and "▶" in text:
+            item.setText(0, text.replace("▶", "▼"))
+        elif not target_state and "▼" in text:
+            item.setText(0, text.replace("▼", "▶"))
+        
+        # 阻塞信号以防止触发 itemExpanded/itemCollapsed 事件（避免重复处理）
+        self.weekly_tree.blockSignals(True)
+        item.setExpanded(target_state)
+        self.weekly_tree.blockSignals(False)
     
     def _on_weekly_item_expanded(self, item):
         """周统计项目展开事件"""
@@ -1372,12 +1418,12 @@ class MainWindow(QMainWindow):
     def _prev_week(self):
         self.week_start -= timedelta(days=7)
         self.weekly_expanded_items.clear()  # 切换周时清除展开状态
-        self._load_weekly_data()
+        self._load_weekly_data(force_rebuild=True)
     
     def _next_week(self):
         self.week_start += timedelta(days=7)
         self.weekly_expanded_items.clear()  # 切换周时清除展开状态
-        self._load_weekly_data()
+        self._load_weekly_data(force_rebuild=True)
 
     def _create_apps_tab(self):
         """创建应用统计标签页"""
@@ -2185,66 +2231,123 @@ class MainWindow(QMainWindow):
     # === UI 更新 ===
     
     def update_ui(self, data):
-        """更新界面"""
+        """更新界面 - 优化版本，减少不必要的更新"""
+        import time
+        
         current = data['current_app']
         stats = data['all_stats']
         
+        # 缓存当前数据
         self.current_data = data
         
+        # 更新迷你窗口（仅在可见时）
         if self.mini_window.isVisible():
             self.mini_window.update_display(data, self.icon_cache)
         
-        # 更新当前应用
-        if current:
-            # 截断过长的应用名称
-            name = current['name']
-            display_name = name if len(name) <= 18 else name[:15] + "..."
-            self.curr_name.setText(display_name)
-            self.curr_name.setToolTip(name)
-            
-            sub = current.get('current_sub_title')
-            if sub:
-                display = sub if len(sub) <= 25 else sub[:22] + "..."
-                self.curr_sub_title.setText(display)
-                self.curr_sub_title.setToolTip(sub)
-                self.curr_sub_title.show()
-            else:
-                self.curr_sub_title.hide()
-            
-            self.curr_timer.setText(format_time(current['session_time']))
-            
-            path = current['path']
-            if path not in self.icon_cache:
-                self.icon_cache[path] = get_icon_from_exe(path)
-            
-            if self.icon_cache[path]:
-                self.curr_icon.setPixmap(self.icon_cache[path].scaled(56, 56, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-            else:
-                self.curr_icon.setText(current['name'][0])
-        else:
-            self.curr_name.setText("闲置")
-            self.curr_sub_title.hide()
-            self.curr_timer.setText("00:00:00")
-            self.curr_icon.setText("-")
+        # 更新当前应用显示
+        self._update_current_app_display(current)
         
         # 更新今日总使用时间
         self._update_today_usage(stats)
         
-        # 如果选中的是今天，实时刷新日历记录
-        if hasattr(self, 'selected_date') and self.selected_date == datetime.now().date():
-            self._load_day_records(self.selected_date)
+        # 节流：日历记录和周统计的更新频率限制
+        current_time = time.time()
         
-        # 如果当前是本周，实时刷新周统计
+        # 日历记录更新（每5秒最多一次）
+        if not hasattr(self, '_last_day_records_update'):
+            self._last_day_records_update = 0
+        
+        if hasattr(self, 'selected_date') and self.selected_date == datetime.now().date():
+            if current_time - self._last_day_records_update >= 5:
+                self._load_day_records(self.selected_date)
+                self._last_day_records_update = current_time
+        
+        # 周统计更新（每10秒最多一次，且需要检查用户交互冷却）
+        if not hasattr(self, '_last_weekly_update'):
+            self._last_weekly_update = 0
+        
         if hasattr(self, 'is_current_week') and self.is_current_week:
-            self._load_weekly_data()
+            # 检查用户交互冷却时间
+            interaction_cooldown = getattr(self, '_weekly_interaction_cooldown', 2.0)
+            last_interaction = getattr(self, '_weekly_last_interaction', 0)
+            
+            if (current_time - self._last_weekly_update >= 10 and
+                current_time - last_interaction >= interaction_cooldown):
+                self._load_weekly_data()
+                self._last_weekly_update = current_time
 
-        # 更新应用列表
+        # 更新应用列表（优化版本）
+        self._update_app_list(stats)
+    
+    def _update_current_app_display(self, current):
+        """更新当前应用显示 - 分离出来便于维护"""
+        if current:
+            # 截断过长的应用名称
+            name = current['name']
+            display_name = name if len(name) <= 18 else name[:15] + "..."
+            
+            # 只在内容变化时更新
+            if self.curr_name.text() != display_name:
+                self.curr_name.setText(display_name)
+                self.curr_name.setToolTip(name)
+            
+            sub = current.get('current_sub_title')
+            if sub:
+                display = sub if len(sub) <= 25 else sub[:22] + "..."
+                if self.curr_sub_title.text() != display:
+                    self.curr_sub_title.setText(display)
+                    self.curr_sub_title.setToolTip(sub)
+                if not self.curr_sub_title.isVisible():
+                    self.curr_sub_title.show()
+            else:
+                if self.curr_sub_title.isVisible():
+                    self.curr_sub_title.hide()
+            
+            # 更新计时器显示
+            time_str = format_time(current['session_time'])
+            if self.curr_timer.text() != time_str:
+                self.curr_timer.setText(time_str)
+            
+            # 更新图标（使用缓存）
+            path = current['path']
+            if path not in self.icon_cache:
+                self.icon_cache[path] = get_icon_from_exe(path)
+            
+            icon = self.icon_cache.get(path)
+            if icon:
+                # 缓存缩放后的图标，避免重复缩放
+                cache_key = f"{path}_scaled_56"
+                if cache_key not in self.icon_cache:
+                    self.icon_cache[cache_key] = icon.scaled(
+                        56, 56,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                self.curr_icon.setPixmap(self.icon_cache[cache_key])
+            else:
+                self.curr_icon.setText(current['name'][0] if current['name'] else "?")
+        else:
+            if self.curr_name.text() != "闲置":
+                self.curr_name.setText("闲置")
+            if self.curr_sub_title.isVisible():
+                self.curr_sub_title.hide()
+            if self.curr_timer.text() != "00:00:00":
+                self.curr_timer.setText("00:00:00")
+            self.curr_icon.setText("-")
+    
+    def _update_app_list(self, stats):
+        """更新应用列表 - 优化版本"""
+        # 按使用时间排序
         sorted_apps = sorted(stats.items(), key=lambda x: x[1]['total_time'], reverse=True)
         
-        current_count = len([w for w in self.list_items.values() if w])
-        need_rebuild = len(sorted_apps) != current_count
+        # 检查是否需要重建列表
+        current_paths = set(self.list_items.keys())
+        new_paths = set(path for path, _ in sorted_apps)
+        
+        need_rebuild = current_paths != new_paths
         
         if need_rebuild:
+            # 完全重建列表
             while self.list_layout.count():
                 child = self.list_layout.takeAt(0)
                 if child.widget():
@@ -2252,20 +2355,31 @@ class MainWindow(QMainWindow):
             self.list_items.clear()
             
             for path, info in sorted_apps:
+                # 获取或创建图标缓存
                 if path not in self.icon_cache:
                     self.icon_cache[path] = get_icon_from_exe(path)
                 
-                item = AppListItem(info['name'], format_time(info['total_time']), self.icon_cache.get(path), info.get('app_type', 'normal'), info.get('children', {}))
+                item = AppListItem(
+                    info['name'],
+                    format_time(info['total_time']),
+                    self.icon_cache.get(path),
+                    info.get('app_type', 'normal'),
+                    info.get('children', {})
+                )
                 self.list_layout.addWidget(item)
                 self.list_items[path] = item
             
             self.list_layout.addStretch()
         else:
+            # 增量更新：只更新时间和子项
             for path, info in sorted_apps:
                 if path in self.list_items:
-                    self.list_items[path].time_label.setText(format_time(info['total_time']))
-                    if hasattr(self.list_items[path], 'update_children'):
-                        self.list_items[path].update_children(info.get('children', {}))
+                    item = self.list_items[path]
+                    new_time = format_time(info['total_time'])
+                    if item.time_label.text() != new_time:
+                        item.time_label.setText(new_time)
+                    if hasattr(item, 'update_children'):
+                        item.update_children(info.get('children', {}))
     
     def _update_today_usage(self, stats):
         """更新今日总使用时间显示"""
