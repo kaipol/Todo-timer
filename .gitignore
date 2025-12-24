@@ -1,3 +1,5 @@
 .vscode
 .history
-build
+.git
+build/
+dist/
