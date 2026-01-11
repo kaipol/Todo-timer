@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 import urllib.request
 import urllib.error
+from urllib.parse import urljoin
 import base64
 import ssl
 
@@ -136,12 +137,14 @@ class WebDAVSync:
             return False, f"创建备份失败: {str(e)}", None
     
     def _webdav_request(self, method: str, url: str, data: bytes = None,
-                        headers: dict = None) -> Tuple[bool, str, Optional[bytes]]:
+                        headers: dict = None, redirect_count: int = 0) -> Tuple[bool, str, Optional[bytes]]:
         """
         发送WebDAV请求
         返回: (成功标志, 消息, 响应数据)
         """
         try:
+            if redirect_count > 5:
+                return False, "重定向次数过多", None
             # 构建认证头
             auth_string = f"{self.config['username']}:{self.config['password']}"
             auth_bytes = base64.b64encode(auth_string.encode('utf-8')).decode('utf-8')
@@ -172,6 +175,18 @@ class WebDAVSync:
                 return True, f"请求成功 ({response.status})", response_data
                 
         except urllib.error.HTTPError as e:
+            if e.code in (301, 302, 303, 307, 308):
+                location = e.headers.get('Location')
+                if location:
+                    new_url = urljoin(url, location)
+                    # 某些WebDAV服务器会将请求重定向到带斜杠的路径
+                    return self._webdav_request(
+                        method,
+                        new_url,
+                        data=data,
+                        headers=headers,
+                        redirect_count=redirect_count + 1
+                    )
             return False, f"HTTP错误: {e.code} {e.reason}", None
         except urllib.error.URLError as e:
             return False, f"连接错误: {str(e.reason)}", None

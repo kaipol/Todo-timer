@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#0ea5a4">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>时间追踪器</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div id="app">
+        <!-- 顶部导航栏 -->
+        <header class="app-header">
+            <h1 class="app-title">时间追踪器</h1>
+            <div class="header-actions">
+                <span class="sync-indicator disabled" id="syncIndicator" title="同步状态">
+                    <i class="fas fa-circle"></i>
+                    <span class="sync-text">同步未启用</span>
+                </span>
+                <button class="sync-btn" id="syncBtn" title="立即同步">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- 主内容区域 -->
+        <main class="app-content">
+            <!-- 计时器页面 -->
+            <section id="timerPage" class="page active">
+                <div class="timer-container">
+                    <!-- 计时显示 -->
+                    <div class="timer-display">
+                        <div class="timer-circle">
+                            <svg class="progress-ring" width="240" height="240">
+                                <circle class="progress-ring-bg" cx="120" cy="120" r="108" />
+                                <circle class="progress-ring-circle" cx="120" cy="120" r="108" />
+                            </svg>
+                            <div class="timer-time" id="timerDisplay">25:00</div>
+                            <div class="timer-status" id="timerStatus">准备开始</div>
+                        </div>
+                    </div>
+
+                    <!-- 时间设置 -->
+                    <div class="time-setting" id="timeSetting">
+                        <div class="time-input-group">
+                            <button class="time-btn" data-action="decrease-min">-</button>
+                            <input type="number" id="minutesInput" value="25" min="1" max="99">
+                            <span>分</span>
+                            <button class="time-btn" data-action="increase-min">+</button>
+                        </div>
+                        <div class="time-input-group">
+                            <button class="time-btn" data-action="decrease-sec">-</button>
+                            <input type="number" id="secondsInput" value="0" min="0" max="59">
+                            <span>秒</span>
+                            <button class="time-btn" data-action="increase-sec">+</button>
+                        </div>
+                    </div>
+
+                    <!-- 备注输入 -->
+                    <div class="note-input-container">
+                        <input type="text" id="noteInput" placeholder="添加备注..." class="note-input">
+                    </div>
+
+                    <!-- 控制按钮 -->
+                    <div class="timer-controls">
+                        <button class="control-btn reset-btn" id="resetBtn">
+                            <i class="fas fa-redo"></i>
+                        </button>
+                        <button class="control-btn start-btn" id="startBtn">
+                            <i class="fas fa-play"></i>
+                        </button>
+                    </div>
+
+                    <!-- 今日记录 -->
+                    <div class="today-records">
+                        <h3><i class="fas fa-history"></i> 今日记录</h3>
+                        <div class="records-list" id="timerRecordsList"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 待办页面 -->
+            <section id="memoPage" class="page">
+                <div class="memo-container">
+                    <!-- 添加待办 -->
+                    <div class="add-memo-form">
+                        <input type="text" id="memoInput" placeholder="添加新待办..." class="memo-input">
+                        <button class="add-memo-btn" id="addMemoBtn">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                    </div>
+
+                    <!-- 筛选 -->
+                    <div class="memo-filter">
+                        <button class="filter-btn active" data-filter="all">全部</button>
+                        <button class="filter-btn" data-filter="pending">待办</button>
+                        <button class="filter-btn" data-filter="completed">已完成</button>
+                    </div>
+
+                    <!-- 待办列表 -->
+                    <div class="memo-list" id="memoList"></div>
+
+                    <!-- 统计 -->
+                    <div class="memo-stats" id="memoStats">
+                        <span class="pending-count">待办: 0</span>
+                        <span class="completed-count">已完成: 0</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 日记页面 -->
+            <section id="diaryPage" class="page">
+                <div class="diary-container">
+                    <!-- 新建日记按钮 -->
+                    <button class="new-diary-btn" id="newDiaryBtn">
+                        <i class="fas fa-plus"></i> 写日记
+                    </button>
+
+                    <!-- 日记列表 -->
+                    <div class="diary-list" id="diaryList"></div>
+                </div>
+
+                <!-- 日记编辑器（模态框） -->
+                <div class="diary-editor-modal" id="diaryEditorModal">
+                    <div class="diary-editor">
+                        <div class="editor-header">
+                            <button class="back-btn" id="diaryBackBtn">
+                                <i class="fas fa-arrow-left"></i>
+                            </button>
+                            <input type="text" id="diaryTitle" placeholder="标题" class="diary-title-input">
+                            <button class="save-btn" id="saveDiaryBtn">
+                                <i class="fas fa-check"></i>
+                            </button>
+                        </div>
+                        <div class="editor-meta">
+                            <select id="diaryMood" class="mood-select">
+                                <option value="😊">😊 开心</option>
+                                <option value="😐" selected>😐 平静</option>
+                                <option value="😢">😢 难过</option>
+                                <option value="😤">😤 生气</option>
+                                <option value="😴">😴 疲惫</option>
+                            </select>
+                            <input type="text" id="diaryWeather" placeholder="天气" class="weather-input">
+                        </div>
+                        <textarea id="diaryContent" placeholder="写下今天的故事..." class="diary-content"></textarea>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 设置页面 -->
+            <section id="settingsPage" class="page">
+                <div class="settings-container">
+                    <!-- WebDAV设置 -->
+                    <div class="settings-section">
+                        <h3><i class="fas fa-cloud"></i> WebDAV同步</h3>
+                        <div class="setting-item">
+                            <label class="switch-label">
+                                <span>启用实时同步</span>
+                                <div class="switch-wrapper">
+                                    <input type="checkbox" id="webdavEnabled" class="switch-input">
+                                    <span class="switch-slider"></span>
+                                    <span class="switch-status" id="syncSwitchStatus">关</span>
+                                </div>
+                            </label>
+                        </div>
+                        <div class="setting-item">
+                            <label>服务器地址</label>
+                            <input type="url" id="webdavServer" placeholder="https://dav.example.com" class="setting-input">
+                        </div>
+                        <div class="setting-item">
+                            <label>用户名</label>
+                            <input type="text" id="webdavUsername" placeholder="用户名" class="setting-input">
+                        </div>
+                        <div class="setting-item">
+                            <label>密码</label>
+                            <input type="password" id="webdavPassword" placeholder="密码" class="setting-input">
+                        </div>
+                        <div class="setting-item">
+                            <label>远程路径</label>
+                            <input type="text" id="webdavPath" placeholder="/TimeTracker/" class="setting-input">
+                        </div>
+                        <div class="setting-buttons">
+                            <button class="setting-btn" id="testConnectionBtn">
+                                <i class="fas fa-plug"></i> 测试连接
+                            </button>
+                            <button class="setting-btn primary" id="saveWebdavBtn">
+                                <i class="fas fa-save"></i> 保存设置
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 数据管理 -->
+                    <div class="settings-section">
+                        <h3><i class="fas fa-database"></i> 数据管理</h3>
+                        <div class="setting-buttons">
+                            <button class="setting-btn" id="uploadBackupBtn">
+                                <i class="fas fa-upload"></i> 上传到云端
+                            </button>
+                            <button class="setting-btn" id="downloadBackupBtn">
+                                <i class="fas fa-download"></i> 从云端下载
+                            </button>
+                            <button class="setting-btn danger" id="clearDataBtn">
+                                <i class="fas fa-trash"></i> 清除本地数据
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 同步状态 -->
+                    <div class="settings-section">
+                        <h3><i class="fas fa-info-circle"></i> 同步状态</h3>
+                        <div class="sync-status" id="syncStatus">
+                            <p>上次同步: <span id="lastSyncTime">从未</span></p>
+                            <p>状态: <span id="syncStatusText">未配置</span></p>
+                        </div>
+                    </div>
+
+                    <!-- 关于 -->
+                    <div class="settings-section">
+                        <h3><i class="fas fa-info"></i> 关于</h3>
+                        <div class="about-info">
+                            <p>时间追踪器 v1.0.0</p>
+                            <p>与电脑端数据实时同步</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- 底部导航栏 -->
+        <nav class="bottom-nav">
+            <button class="nav-item active" data-page="timerPage">
+                <i class="fas fa-clock"></i>
+                <span>计时</span>
+            </button>
+            <button class="nav-item" data-page="memoPage">
+                <i class="fas fa-tasks"></i>
+                <span>待办</span>
+            </button>
+            <button class="nav-item" data-page="diaryPage">
+                <i class="fas fa-book"></i>
+                <span>日记</span>
+            </button>
+            <button class="nav-item" data-page="settingsPage">
+                <i class="fas fa-cog"></i>
+                <span>设置</span>
+            </button>
+        </nav>
+    </div>
+
+    <!-- Toast通知 -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- 加载脚本 -->
+    <script src="js/storage.js"></script>
+    <script src="js/webdav.js"></script>
+    <script src="js/timer.js"></script>
+    <script src="js/memo.js"></script>
+    <script src="js/diary.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
