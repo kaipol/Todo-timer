@@ -1,5 +1,6 @@
 /**
  * 数据存储模块 - 与电脑端数据格式兼容
+ * 性能优化版本：添加内存缓存、批量操作支持
  */
 
 class Storage {
@@ -7,6 +8,20 @@ class Storage {
         this.DB_NAME = 'TimeTrackerDB';
         this.DB_VERSION = 1;
         this.db = null;
+        
+        // 性能优化：内存缓存
+        this._cache = window.Performance?.MemoryCache
+            ? new window.Performance.MemoryCache(300000) // 5分钟 TTL
+            : null;
+        
+        // 缓存键前缀
+        this._cacheKeys = {
+            memos: 'store:memos',
+            diary: 'store:diary',
+            timer_records: 'store:timer_records',
+            usage_records: 'store:usage_records',
+            config: 'store:config'
+        };
     }
 
     async init() {
@@ -56,9 +71,31 @@ class Storage {
         });
     }
 
+    // ==================== 缓存辅助方法 ====================
+    
+    /**
+     * 使指定存储的缓存失效
+     */
+    _invalidateCache(storeName) {
+        if (this._cache) {
+            this._cache.delete(this._cacheKeys[storeName]);
+        }
+    }
+    
+    /**
+     * 使所有缓存失效
+     */
+    _invalidateAllCache() {
+        if (this._cache) {
+            this._cache.clear();
+        }
+    }
+
     // ==================== 通用CRUD操作 ====================
     
     async add(storeName, data) {
+        // 写操作后使缓存失效
+        this._invalidateCache(storeName);
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction([storeName], 'readwrite');
             const store = transaction.objectStore(storeName);
@@ -69,6 +106,8 @@ class Storage {
     }
 
     async put(storeName, data) {
+        // 写操作后使缓存失效
+        this._invalidateCache(storeName);
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction([storeName], 'readwrite');
             const store = transaction.objectStore(storeName);
@@ -97,8 +136,35 @@ class Storage {
             request.onerror = () => reject(request.error);
         });
     }
+    
+    /**
+     * 带缓存的 getAll - 优先从缓存读取
+     */
+    async getAllCached(storeName) {
+        const cacheKey = this._cacheKeys[storeName];
+        
+        // 尝试从缓存获取
+        if (this._cache) {
+            const cached = this._cache.get(cacheKey);
+            if (cached !== undefined) {
+                return cached;
+            }
+        }
+        
+        // 从 IndexedDB 获取
+        const result = await this.getAll(storeName);
+        
+        // 存入缓存
+        if (this._cache) {
+            this._cache.set(cacheKey, result);
+        }
+        
+        return result;
+    }
 
     async delete(storeName, key) {
+        // 写操作后使缓存失效
+        this._invalidateCache(storeName);
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction([storeName], 'readwrite');
             const store = transaction.objectStore(storeName);
@@ -109,12 +175,92 @@ class Storage {
     }
 
     async clear(storeName) {
+        // 写操作后使缓存失效
+        this._invalidateCache(storeName);
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction([storeName], 'readwrite');
             const store = transaction.objectStore(storeName);
             const request = store.clear();
             request.onsuccess = () => resolve();
             request.onerror = () => reject(request.error);
+        });
+    }
+    
+    // ==================== 批量操作（性能优化）====================
+    
+    /**
+     * 批量添加数据 - 使用单个事务提高性能
+     */
+    async batchAdd(storeName, items) {
+        if (!items || items.length === 0) return [];
+        
+        // 写操作后使缓存失效
+        this._invalidateCache(storeName);
+        
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([storeName], 'readwrite');
+            const store = transaction.objectStore(storeName);
+            const results = [];
+            let completed = 0;
+            
+            transaction.oncomplete = () => resolve(results);
+            transaction.onerror = () => reject(transaction.error);
+            
+            for (const item of items) {
+                const request = store.add(item);
+                request.onsuccess = () => {
+                    results.push(request.result);
+                    completed++;
+                };
+            }
+        });
+    }
+    
+    /**
+     * 批量更新数据 - 使用单个事务提高性能
+     */
+    async batchPut(storeName, items) {
+        if (!items || items.length === 0) return [];
+        
+        // 写操作后使缓存失效
+        this._invalidateCache(storeName);
+        
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([storeName], 'readwrite');
+            const store = transaction.objectStore(storeName);
+            const results = [];
+            
+            transaction.oncomplete = () => resolve(results);
+            transaction.onerror = () => reject(transaction.error);
+            
+            for (const item of items) {
+                const request = store.put(item);
+                request.onsuccess = () => {
+                    results.push(request.result);
+                };
+            }
+        });
+    }
+    
+    /**
+     * 批量删除数据 - 使用单个事务提高性能
+     */
+    async batchDelete(storeName, keys) {
+        if (!keys || keys.length === 0) return;
+        
+        // 写操作后使缓存失效
+        this._invalidateCache(storeName);
+        
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([storeName], 'readwrite');
+            const store = transaction.objectStore(storeName);
+            
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+            
+            for (const key of keys) {
+                store.delete(key);
+            }
         });
     }
 
@@ -199,6 +345,10 @@ class Storage {
 
     // ==================== 数据导入导出 ====================
     
+    /**
+     * 导出所有数据（用于WebDAV同步）
+     * 计时器记录会转换为桌面端兼容格式（移除id字段）
+     */
     async exportAllData() {
         const memos = await this.getMemos();
         const diary = await this.getAllDiaryEntries();
@@ -206,13 +356,22 @@ class Storage {
         const usageRecords = await this.getUsageRecords();
         const config = await this.getConfig();
 
+        // 转换计时器记录为桌面端兼容格式（移除id字段）
+        const desktopCompatibleTimerRecords = timerRecords.map(record => ({
+            mode: record.mode,
+            duration: record.duration,
+            note: record.note || '',
+            timestamp: record.timestamp,
+            completed: record.completed !== undefined ? record.completed : true
+        }));
+
         return {
             version: '1.0',
             exportTime: new Date().toISOString(),
             data: {
                 memos,
                 diary,
-                timer_records: timerRecords,
+                timer_records: desktopCompatibleTimerRecords,
                 usage_records: usageRecords,
                 config
             }
@@ -230,19 +389,42 @@ class Storage {
             }
         }
 
-        // 导入日记
+        // 导入日记（为桌面端记录生成date字段）
         if (data.diary && Array.isArray(data.diary)) {
             await this.clear('diary');
             for (const entry of data.diary) {
-                await this.addDiaryEntry(entry);
+                // 桌面端记录没有date字段，需要从created_at提取
+                const normalizedEntry = {
+                    id: entry.id,
+                    // 如果没有date字段，从created_at提取日期部分
+                    date: entry.date || (entry.created_at ? entry.created_at.split('T')[0] : new Date().toISOString().split('T')[0]),
+                    title: entry.title || '',
+                    content: entry.content || '',
+                    mood: entry.mood || '',
+                    weather: entry.weather || '',
+                    tags: entry.tags || [],
+                    images: entry.images || [],
+                    created_at: entry.created_at || new Date().toISOString(),
+                    updated_at: entry.updated_at || new Date().toISOString()
+                };
+                await this.addDiaryEntry(normalizedEntry);
             }
         }
 
-        // 导入计时记录
+        // 导入计时记录（为桌面端记录生成id）
         if (data.timer_records && Array.isArray(data.timer_records)) {
             await this.clear('timer_records');
             for (const record of data.timer_records) {
-                await this.addTimerRecord(record);
+                // 桌面端记录没有id字段，需要生成
+                const normalizedRecord = {
+                    id: record.id || new Date(record.timestamp).getTime().toString(),
+                    mode: record.mode || 'countdown',
+                    duration: record.duration || 0,
+                    note: record.note || '',
+                    timestamp: record.timestamp || new Date().toISOString(),
+                    completed: record.completed !== undefined ? record.completed : true
+                };
+                await this.addTimerRecord(normalizedRecord);
             }
         }
 

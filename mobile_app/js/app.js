@@ -19,6 +19,15 @@ class App {
         this.isInitialized = false;
         this.syncInterval = null;
         this.syncPending = false;
+        
+        // 性能优化：防抖同步
+        this._debouncedSync = null;
+        // 性能优化：缓存 DOM 元素
+        this._loadingEl = null;
+        this._toastEl = null;
+        // 性能优化：Toast 队列管理
+        this._toastQueue = [];
+        this._toastShowing = false;
     }
 
     // 初始化应用
@@ -271,7 +280,7 @@ class App {
         console.log('实时同步已启动');
     }
 
-    // 执行同步
+    // 执行同步（双向同步）
     async performSync() {
         if (this.syncPending || !this.webdav?.isConfigured()) {
             return;
@@ -284,11 +293,18 @@ class App {
             // 获取本地数据
             const localData = await this.storage.exportAllData();
 
-            // 上传到 WebDAV
-            await this.webdav.uploadBackup(localData);
+            // 执行双向同步（下载远程数据、合并、上传）
+            const mergedData = await this.webdav.bidirectionalSync(localData);
+
+            // 如果合并后的数据与本地数据不同，导入合并后的数据
+            if (mergedData && mergedData !== localData) {
+                await this.storage.importAllData(mergedData);
+                
+                // 刷新当前视图以显示合并后的数据
+                this.refreshCurrentView();
+            }
 
             // 更新同步状态
-            this.webdav.updateLastSync();
             this.updateSyncIndicator('synced');
             this.updateSyncStatus();
 
@@ -297,6 +313,28 @@ class App {
             this.updateSyncIndicator('error');
         } finally {
             this.syncPending = false;
+        }
+    }
+
+    // 刷新当前视图
+    refreshCurrentView() {
+        const activeTab = document.querySelector('.nav-item.active');
+        if (activeTab) {
+            const tabName = activeTab.dataset.tab;
+            switch (tabName) {
+                case 'memo':
+                    if (this.memo) this.memo.loadMemos();
+                    break;
+                case 'diary':
+                    if (this.diary) this.diary.loadDiaries();
+                    break;
+                case 'timer':
+                    if (this.timer) this.timer.loadRecords();
+                    break;
+                case 'stats':
+                    this.loadStats();
+                    break;
+            }
         }
     }
 
@@ -484,12 +522,26 @@ class App {
         }
     }
 
-    // 标记数据已修改（触发同步）
+    // 标记数据已修改（触发同步）- 使用防抖优化
     markDataDirty() {
-        // 如果启用了实时同步，立即执行同步
+        // 如果启用了实时同步，使用防抖执行同步
         if (this.webdav?.isConfigured()) {
-            // 延迟1秒执行，避免频繁同步
-            setTimeout(() => this.performSync(), 1000);
+            // 使用防抖函数，避免频繁同步
+            if (!this._debouncedSync) {
+                if (window.Performance?.debounce) {
+                    this._debouncedSync = window.Performance.debounce(() => this.performSync(), 2000);
+                } else {
+                    // 降级方案
+                    this._debouncedSync = (() => {
+                        let timer = null;
+                        return () => {
+                            if (timer) clearTimeout(timer);
+                            timer = setTimeout(() => this.performSync(), 2000);
+                        };
+                    })();
+                }
+            }
+            this._debouncedSync();
         }
     }
 
@@ -521,27 +573,48 @@ class App {
         }
     }
 
-    // 显示提示消息
+    // 显示提示消息 - 优化版本，使用队列管理
     showToast(message, type = 'info') {
-        // 移除现有的 toast
-        const existingToast = document.querySelector('.toast');
-        if (existingToast) {
-            existingToast.remove();
+        // 添加到队列
+        this._toastQueue.push({ message, type });
+        
+        // 如果没有正在显示的 toast，开始显示
+        if (!this._toastShowing) {
+            this._showNextToast();
         }
-
-        const toast = document.createElement('div');
-        toast.className = `toast toast-${type}`;
-        toast.textContent = message;
-        document.body.appendChild(toast);
-
-        // 动画显示
-        setTimeout(() => toast.classList.add('show'), 10);
+    }
+    
+    // 显示下一个 Toast
+    _showNextToast() {
+        if (this._toastQueue.length === 0) {
+            this._toastShowing = false;
+            return;
+        }
+        
+        this._toastShowing = true;
+        const { message, type } = this._toastQueue.shift();
+        
+        // 复用或创建 toast 元素
+        if (!this._toastEl) {
+            this._toastEl = document.createElement('div');
+            this._toastEl.className = 'toast';
+            document.body.appendChild(this._toastEl);
+        }
+        
+        // 更新内容和样式
+        this._toastEl.className = `toast toast-${type}`;
+        this._toastEl.textContent = message;
+        
+        // 使用 requestAnimationFrame 优化动画
+        requestAnimationFrame(() => {
+            this._toastEl.classList.add('show');
+        });
 
         // 自动隐藏
         setTimeout(() => {
-            toast.classList.remove('show');
-            setTimeout(() => toast.remove(), 300);
-        }, 3000);
+            this._toastEl.classList.remove('show');
+            setTimeout(() => this._showNextToast(), 300);
+        }, 2500);
     }
 }
 

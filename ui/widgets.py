@@ -1,9 +1,15 @@
 """
 UI 组件模块 - 迷你窗口和列表项组件
+
+性能优化:
+- 缓存缩放后的图标避免重复缩放
+- 复用子项 widget 而非每次重建
+- 减少不必要的样式更新
 """
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
                               QApplication, QFrame, QSizePolicy)
 from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve
+from PyQt6.QtGui import QPixmap
 
 
 class MiniWindow(QWidget):
@@ -109,39 +115,52 @@ class MiniWindow(QWidget):
         self.restore_signal.emit()
     
     def update_display(self, data, icon_cache):
-        """更新显示内容"""
+        """更新显示内容 - 优化版本，缓存缩放后的图标"""
         self.icon_cache = icon_cache
         current = data.get('current_app')
         
         if current:
             # 截断过长的名称
             name = current['name']
-            if len(name) > 15:
-                name = name[:14] + "..."
-            self.name_label.setText(name)
+            display_name = name[:14] + "..." if len(name) > 15 else name
+            
+            # 只在内容变化时更新（减少不必要的重绘）
+            if self.name_label.text() != display_name:
+                self.name_label.setText(display_name)
             
             # 格式化时间
             seconds = current['session_time']
             m, s = divmod(int(seconds), 60)
             h, m = divmod(m, 60)
-            self.time_label.setText(f"{h:02d}:{m:02d}:{s:02d}")
+            time_str = f"{h:02d}:{m:02d}:{s:02d}"
+            if self.time_label.text() != time_str:
+                self.time_label.setText(time_str)
             
-            # 图标
+            # 图标 - 使用缓存的缩放版本
             path = current['path']
             if path in self.icon_cache and self.icon_cache[path]:
-                self.icon_label.setPixmap(self.icon_cache[path].scaled(
-                    24, 24,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation
-                ))
+                # 使用缓存的缩放图标，避免每次都重新缩放
+                cache_key = f"{path}_scaled_24"
+                if cache_key not in self.icon_cache:
+                    self.icon_cache[cache_key] = self.icon_cache[path].scaled(
+                        24, 24,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                self.icon_label.setPixmap(self.icon_cache[cache_key])
             else:
                 self.icon_label.clear()
-                self.icon_label.setText(name[0] if name else "-")
+                first_char = name[0] if name else "-"
+                if self.icon_label.text() != first_char:
+                    self.icon_label.setText(first_char)
         else:
-            self.name_label.setText("闲置")
-            self.time_label.setText("00:00:00")
+            if self.name_label.text() != "闲置":
+                self.name_label.setText("闲置")
+            if self.time_label.text() != "00:00:00":
+                self.time_label.setText("00:00:00")
             self.icon_label.clear()
-            self.icon_label.setText("-")
+            if self.icon_label.text() != "-":
+                self.icon_label.setText("-")
 
 
 class AppListItem(QWidget):
@@ -270,33 +289,62 @@ class AppListItem(QWidget):
             self.children_container.hide()
     
     def _populate_children(self):
-        """填充子项"""
-        # 清除现有子项
-        for widget in self.child_widgets:
-            widget.deleteLater()
-        self.child_widgets.clear()
-        
+        """填充子项 - 优化版本，复用现有 widget"""
         # 按时间排序子项
         sorted_children = sorted(
             self.children_data.items(),
             key=lambda x: x[1].get('total_time', 0),
             reverse=True
-        )
+        )[:15]  # 最多显示15个子项
         
-        # 最多显示10个子项
-        for key, data in sorted_children[:15]:
-            child_widget = ChildListItem(
-                title=data.get('title', key),
-                time_seconds=data.get('total_time', 0),
-                domain=data.get('domain'),
-                app_type=self.app_type
-            )
-            self.children_layout.addWidget(child_widget)
-            self.child_widgets.append(child_widget)
+        # 计算需要的 widget 数量
+        needed_count = len(sorted_children)
+        current_count = len([w for w in self.child_widgets if isinstance(w, ChildListItem)])
+        
+        # 复用或创建 ChildListItem
+        child_index = 0
+        for key, data in sorted_children:
+            if child_index < current_count:
+                # 复用现有 widget
+                child_widget = self.child_widgets[child_index]
+                if isinstance(child_widget, ChildListItem):
+                    child_widget.update_data(
+                        title=data.get('title', key),
+                        time_seconds=data.get('total_time', 0),
+                        domain=data.get('domain')
+                    )
+            else:
+                # 创建新 widget
+                child_widget = ChildListItem(
+                    title=data.get('title', key),
+                    time_seconds=data.get('total_time', 0),
+                    domain=data.get('domain'),
+                    app_type=self.app_type
+                )
+                self.children_layout.addWidget(child_widget)
+                self.child_widgets.append(child_widget)
+            child_index += 1
+        
+        # 隐藏多余的 widget（而不是删除，以便复用）
+        for i in range(needed_count, len(self.child_widgets)):
+            widget = self.child_widgets[i]
+            if isinstance(widget, ChildListItem):
+                widget.hide()
+            else:
+                # 删除 "更多" 标签
+                widget.deleteLater()
+        
+        # 清理已删除的 widget 引用
+        self.child_widgets = self.child_widgets[:needed_count]
+        
+        # 确保所有需要的 widget 都可见
+        for i in range(needed_count):
+            self.child_widgets[i].show()
         
         # 如果有更多项，显示提示
-        if len(sorted_children) > 15:
-            more_label = QLabel(f"... 还有 {len(sorted_children) - 15} 项")
+        total_children = len(self.children_data)
+        if total_children > 15:
+            more_label = QLabel(f"... 还有 {total_children - 15} 项")
             more_label.setStyleSheet("color: #999; font-size: 12px; padding: 4px;")
             more_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.children_layout.addWidget(more_label)

@@ -1,0 +1,21 @@
+{
+  "appId": "com.timetracker.app",
+  "appName": "TimeTracker",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "Filesystem": {
+      "directory": "Documents"
+    },
+    "Preferences": {
+      "group": "TimeTrackerPrefs"
+    }
+  },
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  }
+}

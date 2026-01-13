@@ -19,6 +19,7 @@ from core.monitor import AppMonitor
 from core.config import app_config
 from core.storage import timer_storage, TimerRecord, app_usage_storage, memo_storage, diary_storage
 from core.utils import get_icon_from_exe, format_time
+from core.webdav_sync import webdav_sync
 from ui.widgets import MiniWindow, AppListItem
 from ui.settings_dialog import SettingsDialog
 from ui.memo_widget import MemoWidget, ReminderDialog, TodayMemoWidget
@@ -611,13 +612,40 @@ class MainWindow(QMainWindow):
         parent_layout.addLayout(self.calendar_grid)
         
         self.day_buttons = []
+        self._day_button_dates = {}  # 按钮到日期的映射
+        self._last_calendar_month = None  # 缓存上次显示的月份
+        
+        # 预缓存日历按钮样式
+        self._init_calendar_styles()
+        
         self._update_calendar()
     
+    def _init_calendar_styles(self):
+        """初始化日历按钮样式缓存"""
+        base_style = """
+            QPushButton {{
+                border: none;
+                border-radius: 19px;
+                font-size: 14px;
+                {style}
+            }}
+            QPushButton:hover {{
+                background: #d0e8ff;
+                color: #333;
+            }}
+        """
+        self._calendar_styles = {
+            'selected': base_style.format(style="background: #d0e8ff; color: #007bff; font-weight: bold; border: 2px solid #007bff;"),
+            'today': base_style.format(style="border: 2px solid #007bff; background: white; color: #007bff; font-weight: bold;"),
+            'has_record': base_style.format(style="background: #e8f4ff; color: #333;"),
+            'current_month': base_style.format(style="background: transparent; color: #333;"),
+            'other_month': base_style.format(style="background: transparent; color: #ccc;"),
+        }
+    
     def _update_calendar(self):
-        """更新日历显示"""
-        for btn in self.day_buttons:
-            btn.deleteLater()
-        self.day_buttons.clear()
+        """更新日历显示 - 优化版本，复用按钮"""
+        month_changed = self._last_calendar_month != self.displayed_month
+        self._last_calendar_month = self.displayed_month
         
         self.month_label.setText(self.displayed_month.strftime("%Y年%m月"))
         
@@ -635,73 +663,115 @@ class MainWindow(QMainWindow):
             next_month = self.displayed_month.replace(month=self.displayed_month.month + 1)
         days_in_month = (next_month - self.displayed_month).days
         
+        # 计算需要的按钮总数
+        total_buttons_needed = first_weekday + days_in_month
+        # 补齐到完整的行
+        remaining = total_buttons_needed % 7
+        if remaining > 0:
+            total_buttons_needed += (7 - remaining)
+        
+        # 如果月份改变或按钮数量不足，需要重建
+        if month_changed or len(self.day_buttons) != total_buttons_needed:
+            # 清除旧按钮
+            for btn in self.day_buttons:
+                btn.deleteLater()
+            self.day_buttons.clear()
+            self._day_button_dates.clear()
+            
+            # 创建新按钮
+            for i in range(total_buttons_needed):
+                btn = QPushButton()
+                btn.setFixedSize(38, 38)
+                row, col = divmod(i, 7)
+                self.calendar_grid.addWidget(btn, row, col)
+                self.day_buttons.append(btn)
+        
+        # 更新按钮内容和样式
+        btn_index = 0
+        
         # 填充上月日期
         if first_weekday > 0:
             prev_month_end = first_day - timedelta(days=1)
             for i in range(first_weekday - 1, -1, -1):
                 d = prev_month_end - timedelta(days=i)
-                btn = self._create_day_button(d, False, d in dates_with_records)
-                self.calendar_grid.addWidget(btn, 0, first_weekday - 1 - i)
-                self.day_buttons.append(btn)
+                self._update_day_button(btn_index, d, False, d in dates_with_records, False, False)
+                btn_index += 1
         
         # 填充当月日期
-        row = 0
-        col = first_weekday
         for day in range(1, days_in_month + 1):
             d = self.displayed_month.replace(day=day)
             is_today = d == self.current_date
             is_selected = d == self.selected_date
             has_record = d in dates_with_records
-            
-            btn = self._create_day_button(d, True, has_record, is_today, is_selected)
-            self.calendar_grid.addWidget(btn, row, col)
-            self.day_buttons.append(btn)
-            
-            col += 1
-            if col > 6:
-                col = 0
-                row += 1
+            self._update_day_button(btn_index, d, True, has_record, is_today, is_selected)
+            btn_index += 1
         
         # 填充下月日期
         next_day = next_month
-        while col != 0 and col <= 6:
-            btn = self._create_day_button(next_day, False, next_day in dates_with_records)
-            self.calendar_grid.addWidget(btn, row, col)
-            self.day_buttons.append(btn)
-            col += 1
+        while btn_index < len(self.day_buttons):
+            self._update_day_button(btn_index, next_day, False, next_day in dates_with_records, False, False)
+            btn_index += 1
             next_day += timedelta(days=1)
+    
+    def _update_day_button(self, index, date, is_current_month=True, has_record=False,
+                           is_today=False, is_selected=False):
+        """更新日期按钮 - 复用现有按钮"""
+        btn = self.day_buttons[index]
+        
+        # 更新文本（仅在变化时）
+        day_text = str(date.day)
+        if btn.text() != day_text:
+            btn.setText(day_text)
+        
+        # 更新日期映射
+        old_date = self._day_button_dates.get(index)
+        if old_date != date:
+            self._day_button_dates[index] = date
+            # 重新连接点击事件
+            try:
+                btn.clicked.disconnect()
+            except:
+                pass
+            btn.clicked.connect(lambda checked, d=date: self._on_date_clicked(d))
+        
+        # 选择合适的样式
+        if is_selected:
+            style_key = 'selected'
+        elif is_today:
+            style_key = 'today'
+        elif has_record:
+            style_key = 'has_record'
+        elif is_current_month:
+            style_key = 'current_month'
+        else:
+            style_key = 'other_month'
+        
+        # 仅在样式变化时更新
+        current_style_key = btn.property('style_key')
+        if current_style_key != style_key:
+            btn.setStyleSheet(self._calendar_styles[style_key])
+            btn.setProperty('style_key', style_key)
     
     def _create_day_button(self, date, is_current_month=True, has_record=False,
                            is_today=False, is_selected=False):
-        """创建日期按钮"""
+        """创建日期按钮 - 保留用于兼容性"""
         btn = QPushButton(str(date.day))
         btn.setFixedSize(38, 38)
         btn.clicked.connect(lambda: self._on_date_clicked(date))
         
         if is_selected:
-            # 选中状态：蓝色边框和背景，保持深色文字
-            style = "background: #d0e8ff; color: #007bff; font-weight: bold; border: 2px solid #007bff;"
+            style_key = 'selected'
         elif is_today:
-            style = "border: 2px solid #007bff; background: white; color: #007bff; font-weight: bold;"
+            style_key = 'today'
         elif has_record:
-            style = "background: #e8f4ff; color: #333;"
+            style_key = 'has_record'
         elif is_current_month:
-            style = "background: transparent; color: #333;"
+            style_key = 'current_month'
         else:
-            style = "background: transparent; color: #ccc;"
+            style_key = 'other_month'
         
-        btn.setStyleSheet(f"""
-            QPushButton {{
-                border: none;
-                border-radius: 19px;
-                font-size: 14px;
-                {style}
-            }}
-            QPushButton:hover {{
-                background: #d0e8ff;
-                color: #333;
-            }}
-        """)
+        btn.setStyleSheet(self._calendar_styles[style_key])
+        btn.setProperty('style_key', style_key)
         return btn
     
     def _on_date_clicked(self, date):

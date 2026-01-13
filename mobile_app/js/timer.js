@@ -1,5 +1,6 @@
 /**
  * 计时器模块 - 番茄钟和正计时功能
+ * 性能优化版本：使用 requestAnimationFrame、DOM 缓存、防抖
  */
 
 class TimerModule {
@@ -10,17 +11,50 @@ class TimerModule {
         this.seconds = 25 * 60;
         this.initialSeconds = 25 * 60;
         this.stopwatchSeconds = 0;
-        this.interval = null;
         this.currentNote = '';
         this.storage = null;
+        
+        // 性能优化：使用 requestAnimationFrame 替代 setInterval
+        this._rafId = null;
+        this._lastTickTime = 0;
+        
+        // 性能优化：缓存 DOM 元素
+        this._displayEl = null;
+        this._statusEl = null;
+        this._progressCircle = null;
+        this._startBtn = null;
+        this._historyEl = null;
+        
+        // 性能优化：防抖的显示更新
+        this._throttledUpdateDisplay = null;
     }
 
     async init() {
         // 从全局 app 获取 storage
         this.storage = window.app?.storage;
+        
+        // 缓存 DOM 元素引用
+        this._cacheElements();
+        
+        // 初始化节流的显示更新
+        if (window.Performance?.rafThrottle) {
+            this._throttledUpdateDisplay = window.Performance.rafThrottle(() => this._doUpdateDisplay());
+        }
+        
         this.bindEvents();
         await this.loadHistory();
         this.updateDisplay();
+    }
+    
+    /**
+     * 缓存 DOM 元素引用（性能优化）
+     */
+    _cacheElements() {
+        this._displayEl = document.getElementById('timerDisplay');
+        this._statusEl = document.getElementById('timerStatus');
+        this._progressCircle = document.querySelector('.progress-ring-circle');
+        this._startBtn = document.getElementById('startBtn');
+        this._historyEl = document.getElementById('timerHistory');
     }
 
     bindEvents() {
@@ -105,8 +139,8 @@ class TimerModule {
         this.running = true;
         this.paused = false;
 
-        // 更新按钮
-        const startBtn = document.getElementById('startBtn');
+        // 更新按钮（使用缓存的元素）
+        const startBtn = this._startBtn || document.getElementById('startBtn');
         if (startBtn) {
             startBtn.innerHTML = '<i class="fas fa-pause"></i>';
             startBtn.classList.add('running');
@@ -115,21 +149,61 @@ class TimerModule {
         // 更新状态
         this.updateStatus(this.mode === 'countdown' ? '专注中...' : '计时中...');
 
-        // 开始计时
-        this.interval = setInterval(() => this.tick(), 1000);
+        // 使用 requestAnimationFrame 替代 setInterval（性能优化）
+        this._lastTickTime = performance.now();
+        this._startRAFLoop();
+    }
+    
+    /**
+     * 启动 RAF 循环（性能优化）
+     * 使用 requestAnimationFrame 替代 setInterval，更节能且更精确
+     */
+    _startRAFLoop() {
+        const loop = (currentTime) => {
+            if (!this.running) return;
+            
+            // 计算经过的时间
+            const elapsed = currentTime - this._lastTickTime;
+            
+            // 每秒执行一次 tick
+            if (elapsed >= 1000) {
+                // 补偿时间偏差
+                const tickCount = Math.floor(elapsed / 1000);
+                for (let i = 0; i < tickCount; i++) {
+                    this.tick();
+                    if (!this.running) break; // tick 可能会停止计时器
+                }
+                this._lastTickTime = currentTime - (elapsed % 1000);
+            }
+            
+            // 继续循环
+            if (this.running) {
+                this._rafId = requestAnimationFrame(loop);
+            }
+        };
+        
+        this._rafId = requestAnimationFrame(loop);
+    }
+    
+    /**
+     * 停止 RAF 循环
+     */
+    _stopRAFLoop() {
+        if (this._rafId) {
+            cancelAnimationFrame(this._rafId);
+            this._rafId = null;
+        }
     }
 
     pause() {
         this.running = false;
         this.paused = true;
 
-        if (this.interval) {
-            clearInterval(this.interval);
-            this.interval = null;
-        }
+        // 停止 RAF 循环
+        this._stopRAFLoop();
 
-        // 更新按钮
-        const startBtn = document.getElementById('startBtn');
+        // 更新按钮（使用缓存的元素）
+        const startBtn = this._startBtn || document.getElementById('startBtn');
         if (startBtn) {
             startBtn.innerHTML = '<i class="fas fa-play"></i>';
             startBtn.classList.remove('running');
@@ -147,10 +221,8 @@ class TimerModule {
         this.running = false;
         this.paused = false;
 
-        if (this.interval) {
-            clearInterval(this.interval);
-            this.interval = null;
-        }
+        // 停止 RAF 循环
+        this._stopRAFLoop();
 
         // 重置时间
         if (this.mode === 'countdown') {
@@ -159,8 +231,8 @@ class TimerModule {
             this.stopwatchSeconds = 0;
         }
 
-        // 更新UI
-        const startBtn = document.getElementById('startBtn');
+        // 更新UI（使用缓存的元素）
+        const startBtn = this._startBtn || document.getElementById('startBtn');
         if (startBtn) {
             startBtn.innerHTML = '<i class="fas fa-play"></i>';
             startBtn.classList.remove('running');
@@ -236,8 +308,23 @@ class TimerModule {
         }
     }
 
+    /**
+     * 更新显示（使用缓存的 DOM 元素）
+     */
     updateDisplay() {
-        const display = document.getElementById('timerDisplay');
+        // 如果有节流版本且正在运行，使用节流版本
+        if (this._throttledUpdateDisplay && this.running) {
+            this._throttledUpdateDisplay();
+        } else {
+            this._doUpdateDisplay();
+        }
+    }
+    
+    /**
+     * 实际执行显示更新（性能优化：使用缓存的 DOM 元素）
+     */
+    _doUpdateDisplay() {
+        const display = this._displayEl || document.getElementById('timerDisplay');
         if (!display) return;
 
         let totalSeconds = this.mode === 'countdown' ? this.seconds : this.stopwatchSeconds;
@@ -260,21 +347,75 @@ class TimerModule {
         }
     }
 
+    /**
+     * 更新状态文本（使用缓存的 DOM 元素）
+     */
     updateStatus(text) {
-        const status = document.getElementById('timerStatus');
+        const status = this._statusEl || document.getElementById('timerStatus');
         if (status) {
             status.textContent = text;
         }
     }
 
+    /**
+     * 更新进度环（使用缓存的 DOM 元素）
+     */
     updateProgress(percent) {
-        const circle = document.querySelector('.progress-ring-circle');
+        const circle = this._progressCircle || document.querySelector('.progress-ring-circle');
         if (circle) {
             const radius = circle.r.baseVal.value;
             const circumference = radius * 2 * Math.PI;
             const offset = circumference - (percent / 100) * circumference;
             circle.style.strokeDasharray = `${circumference} ${circumference}`;
             circle.style.strokeDashoffset = offset;
+        }
+    }
+    
+    /**
+     * 页面隐藏时的处理（性能优化）
+     * 当页面不可见时，暂停 RAF 循环以节省资源
+     */
+    onPageHidden() {
+        if (this.running) {
+            // 记录隐藏时的时间戳，用于恢复时补偿
+            this._hiddenTime = performance.now();
+            // 停止 RAF 循环以节省电量
+            this._stopRAFLoop();
+        }
+    }
+    
+    /**
+     * 页面显示时的处理（性能优化）
+     * 当页面重新可见时，恢复计时并补偿隐藏期间的时间
+     */
+    onPageVisible() {
+        if (this.running && this._hiddenTime) {
+            // 计算隐藏期间经过的时间
+            const hiddenDuration = performance.now() - this._hiddenTime;
+            const hiddenSeconds = Math.floor(hiddenDuration / 1000);
+            
+            // 补偿隐藏期间的时间
+            if (hiddenSeconds > 0) {
+                if (this.mode === 'countdown') {
+                    this.seconds = Math.max(0, this.seconds - hiddenSeconds);
+                    if (this.seconds === 0) {
+                        this.onCountdownFinished();
+                        return;
+                    }
+                } else {
+                    this.stopwatchSeconds += hiddenSeconds;
+                }
+                this.updateDisplay();
+                if (this.mode === 'countdown') {
+                    const progress = (this.seconds / this.initialSeconds) * 100;
+                    this.updateProgress(progress);
+                }
+            }
+            
+            // 重新启动 RAF 循环
+            this._lastTickTime = performance.now();
+            this._startRAFLoop();
+            this._hiddenTime = null;
         }
     }
 
@@ -383,6 +524,64 @@ class TimerModule {
             return `${minutes}m ${secs}s`;
         } else {
             return `${secs}s`;
+        }
+    }
+
+    /**
+     * 导出数据（用于同步）
+     * 导出时移除移动端特有的id字段，以兼容桌面端格式
+     * 桌面端格式: { mode, duration, note, timestamp, completed }
+     */
+    async exportData() {
+        if (!this.storage) return [];
+        
+        try {
+            const records = await this.storage.getTimerRecords();
+            // 转换为桌面端兼容格式（移除id字段）
+            return records.map(record => ({
+                mode: record.mode,
+                duration: record.duration,
+                note: record.note || '',
+                timestamp: record.timestamp,
+                completed: record.completed !== undefined ? record.completed : true
+            }));
+        } catch (error) {
+            console.error('导出计时记录失败:', error);
+            return [];
+        }
+    }
+
+    /**
+     * 导入数据（用于同步）
+     * 从桌面端导入时，为每条记录生成id（如果没有的话）
+     * 桌面端格式: { mode, duration, note, timestamp, completed }
+     * 移动端格式: { id, mode, duration, note, timestamp, completed }
+     */
+    async importData(records) {
+        if (!this.storage || !Array.isArray(records)) return;
+        
+        try {
+            // 清除现有记录
+            await this.storage.clear('timer_records');
+            
+            // 导入新记录，确保每条记录都有id
+            for (const record of records) {
+                const normalizedRecord = {
+                    // 如果没有id，基于timestamp生成一个
+                    id: record.id || new Date(record.timestamp).getTime().toString(),
+                    mode: record.mode || 'countdown',
+                    duration: record.duration || 0,
+                    note: record.note || '',
+                    timestamp: record.timestamp || new Date().toISOString(),
+                    completed: record.completed !== undefined ? record.completed : true
+                };
+                await this.storage.addTimerRecord(normalizedRecord);
+            }
+            
+            // 刷新历史列表
+            await this.loadHistory();
+        } catch (error) {
+            console.error('导入计时记录失败:', error);
         }
     }
 }

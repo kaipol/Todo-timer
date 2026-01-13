@@ -1,6 +1,7 @@
 /**
  * 日记模块 - 管理日记功能
  * 与桌面端 diary_storage.py 数据格式兼容
+ * 性能优化版本：使用事件委托、DOM 缓存、防抖渲染
  */
 
 class DiaryModule {
@@ -10,6 +11,23 @@ class DiaryModule {
         this.currentEntry = null;
         this.currentDate = new Date();
         this.isEditing = false;
+        
+        // 性能优化：缓存 DOM 元素
+        this._listContainer = null;
+        this._editorModal = null;
+        this._viewContainer = null;
+        this._moodSelector = null;
+        this._weatherSelector = null;
+        
+        // 性能优化：事件委托器
+        this._listDelegator = null;
+        this._moodDelegator = null;
+        this._weatherDelegator = null;
+        
+        // 性能优化：防抖渲染
+        this._debouncedRender = window.Performance?.debounce
+            ? window.Performance.debounce(() => this._doRenderEntryList(), 100)
+            : () => this._doRenderEntryList();
         
         // 心情选项
         this.moodOptions = [
@@ -40,10 +58,8 @@ class DiaryModule {
      */
     async init() {
         await this.loadEntries();
-        this.renderCalendar();
         this.renderEntryList();
         this.bindEvents();
-        this.loadTodayEntry();
     }
     
     /**
@@ -64,38 +80,28 @@ class DiaryModule {
      * 绑定事件
      */
     bindEvents() {
-        // 新建日记按钮
-        const newBtn = document.getElementById('new-diary-btn');
+        // 新建日记按钮 - 匹配 index.html 中的 newDiaryBtn
+        const newBtn = document.getElementById('newDiaryBtn');
         if (newBtn) {
             newBtn.addEventListener('click', () => this.showEditor());
         }
         
-        // 保存按钮
-        const saveBtn = document.getElementById('save-diary-btn');
+        // 保存按钮 - 匹配 index.html 中的 saveDiaryBtn
+        const saveBtn = document.getElementById('saveDiaryBtn');
         if (saveBtn) {
             saveBtn.addEventListener('click', () => this.saveEntry());
         }
         
-        // 取消按钮
-        const cancelBtn = document.getElementById('cancel-diary-btn');
+        // 取消/返回按钮 - 匹配 index.html 中的 diaryBackBtn
+        const cancelBtn = document.getElementById('diaryBackBtn');
         if (cancelBtn) {
             cancelBtn.addEventListener('click', () => this.hideEditor());
         }
         
         // 删除按钮
-        const deleteBtn = document.getElementById('delete-diary-btn');
+        const deleteBtn = document.getElementById('deleteDiaryBtn');
         if (deleteBtn) {
             deleteBtn.addEventListener('click', () => this.deleteCurrentEntry());
-        }
-        
-        // 月份导航
-        const prevMonth = document.getElementById('prev-month');
-        const nextMonth = document.getElementById('next-month');
-        if (prevMonth) {
-            prevMonth.addEventListener('click', () => this.navigateMonth(-1));
-        }
-        if (nextMonth) {
-            nextMonth.addEventListener('click', () => this.navigateMonth(1));
         }
         
         // 心情选择
@@ -148,92 +154,64 @@ class DiaryModule {
     }
     
     /**
-     * 渲染日历视图
-     */
-    renderCalendar() {
-        const container = document.getElementById('diary-calendar');
-        if (!container) return;
-        
-        const year = this.currentDate.getFullYear();
-        const month = this.currentDate.getMonth();
-        
-        // 更新月份标题
-        const monthTitle = document.getElementById('current-month');
-        if (monthTitle) {
-            monthTitle.textContent = `${year}年${month + 1}月`;
-        }
-        
-        // 获取当月第一天和最后一天
-        const firstDay = new Date(year, month, 1);
-        const lastDay = new Date(year, month + 1, 0);
-        
-        // 获取当月第一天是星期几
-        const startDayOfWeek = firstDay.getDay();
-        
-        // 获取有日记的日期
-        const datesWithEntries = new Set(
-            this.entries
-                .filter(e => {
-                    const d = new Date(e.date);
-                    return d.getFullYear() === year && d.getMonth() === month;
-                })
-                .map(e => new Date(e.date).getDate())
-        );
-        
-        // 生成日历HTML
-        let html = `
-            <div class="calendar-header">
-                <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
-            </div>
-            <div class="calendar-body">
-        `;
-        
-        // 填充空白天
-        for (let i = 0; i < startDayOfWeek; i++) {
-            html += '<span class="calendar-day empty"></span>';
-        }
-        
-        // 填充日期
-        const today = new Date();
-        for (let day = 1; day <= lastDay.getDate(); day++) {
-            const isToday = today.getFullYear() === year && 
-                           today.getMonth() === month && 
-                           today.getDate() === day;
-            const hasEntry = datesWithEntries.has(day);
-            
-            let classes = 'calendar-day';
-            if (isToday) classes += ' today';
-            if (hasEntry) classes += ' has-entry';
-            
-            html += `<span class="${classes}" data-date="${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}">${day}</span>`;
-        }
-        
-        html += '</div>';
-        container.innerHTML = html;
-        
-        // 绑定日期点击事件
-        container.querySelectorAll('.calendar-day:not(.empty)').forEach(dayEl => {
-            dayEl.addEventListener('click', (e) => {
-                const date = e.target.dataset.date;
-                this.loadEntryByDate(date);
-            });
-        });
-    }
-    
-    /**
-     * 导航月份
-     */
-    navigateMonth(delta) {
-        this.currentDate.setMonth(this.currentDate.getMonth() + delta);
-        this.renderCalendar();
-    }
-    
-    /**
-     * 渲染日记列表
+     * 渲染日记列表（使用防抖优化）
      */
     renderEntryList() {
-        const container = document.getElementById('diary-list');
+        // 使用防抖渲染，避免频繁更新
+        this._debouncedRender();
+    }
+    
+    /**
+     * 设置列表事件委托（只需设置一次）
+     */
+    _setupListEventDelegation() {
+        if (!this._listContainer || this._listDelegator) return;
+        
+        // 使用 EventDelegator 进行事件委托
+        if (window.Performance?.EventDelegator) {
+            this._listDelegator = new window.Performance.EventDelegator(this._listContainer);
+            
+            // 卡片点击事件（查看详情）
+            this._listDelegator.on('click', '.diary-entry-card', (e, target) => {
+                // 如果点击的是按钮，不触发卡片点击
+                if (e.target.closest('.entry-action-btn')) return;
+                const id = target.dataset.id;
+                this.loadEntry(id);
+            });
+            
+            // 编辑按钮事件
+            this._listDelegator.on('click', '.edit-btn', (e, target) => {
+                e.stopPropagation();
+                const id = target.dataset.id;
+                const entry = this.entries.find(ent => ent.id === id);
+                if (entry) {
+                    this.showEditor(entry.date, entry);
+                }
+            });
+            
+            // 删除按钮事件
+            this._listDelegator.on('click', '.delete-btn', (e, target) => {
+                e.stopPropagation();
+                const id = target.dataset.id;
+                this.deleteEntry(id);
+            });
+        }
+    }
+    
+    /**
+     * 实际执行渲染的方法
+     */
+    _doRenderEntryList() {
+        // 缓存 DOM 元素
+        if (!this._listContainer) {
+            this._listContainer = document.getElementById('diaryList');
+        }
+        
+        const container = this._listContainer;
         if (!container) return;
+        
+        // 设置事件委托（只需一次）
+        this._setupListEventDelegation();
         
         if (this.entries.length === 0) {
             container.innerHTML = `
@@ -257,6 +235,10 @@ class DiaryModule {
             groupedEntries[key].push(entry);
         });
         
+        // 使用 DocumentFragment 批量构建 DOM
+        const fragment = document.createDocumentFragment();
+        const tempDiv = document.createElement('div');
+        
         let html = '';
         for (const [month, entries] of Object.entries(groupedEntries)) {
             html += `<div class="diary-month-group">
@@ -268,21 +250,31 @@ class DiaryModule {
                 const mood = this.moodOptions.find(m => m.value === entry.mood);
                 const weather = this.weatherOptions.find(w => w.value === entry.weather);
                 
+                // 获取标题（如果有）
+                const title = entry.title || '';
                 // 获取内容预览
-                const preview = this.getContentPreview(entry.content, 50);
+                const preview = this.getContentPreview(entry.content, 80);
+                // 格式化日期显示
+                const dateStr = `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${this.getWeekdayName(date.getDay())}`;
                 
                 html += `
-                    <div class="diary-entry-item" data-id="${entry.id}">
-                        <div class="entry-date">
-                            <span class="day">${date.getDate()}</span>
-                            <span class="weekday">${this.getWeekdayName(date.getDay())}</span>
-                        </div>
-                        <div class="entry-content">
-                            <div class="entry-meta">
-                                ${mood ? `<span class="mood">${mood.emoji}</span>` : ''}
-                                ${weather ? `<span class="weather">${weather.emoji}</span>` : ''}
+                    <div class="diary-entry-card" data-id="${entry.id}">
+                        <div class="entry-header">
+                            <span class="entry-date-small">${dateStr}</span>
+                            <div class="entry-icons">
+                                ${mood ? `<span class="mood-icon">${mood.emoji}</span>` : ''}
+                                ${weather ? `<span class="weather-icon">${weather.emoji}</span>` : ''}
                             </div>
-                            <p class="entry-preview">${preview || '(空白日记)'}</p>
+                        </div>
+                        <h4 class="entry-title">${title || '无标题'}</h4>
+                        <p class="entry-preview-text">${preview || '(空白日记)'}</p>
+                        <div class="entry-actions">
+                            <button class="entry-action-btn edit-btn" data-id="${entry.id}" title="编辑">
+                                <span>✏️</span> 编辑
+                            </button>
+                            <button class="entry-action-btn delete-btn" data-id="${entry.id}" title="删除">
+                                <span>🗑️</span> 删除
+                            </button>
                         </div>
                     </div>
                 `;
@@ -291,15 +283,49 @@ class DiaryModule {
             html += '</div></div>';
         }
         
-        container.innerHTML = html;
-        
-        // 绑定点击事件
-        container.querySelectorAll('.diary-entry-item').forEach(item => {
-            item.addEventListener('click', () => {
-                const id = item.dataset.id;
-                this.loadEntry(id);
+        // 使用 requestAnimationFrame 优化 DOM 更新
+        if (window.requestAnimationFrame) {
+            requestAnimationFrame(() => {
+                container.innerHTML = html;
             });
-        });
+        } else {
+            container.innerHTML = html;
+        }
+        
+        // 事件委托已在 _setupListEventDelegation 中设置，无需重复绑定
+    }
+    
+    /**
+     * 删除指定日记
+     */
+    async deleteEntry(id) {
+        const entry = this.entries.find(e => e.id === id);
+        if (!entry) return;
+        
+        if (!confirm('确定要删除这篇日记吗？')) {
+            return;
+        }
+        
+        try {
+            await this.storage.deleteDiaryEntry(id);
+            
+            // 从本地列表移除
+            this.entries = this.entries.filter(e => e.id !== id);
+            
+            this.showToast('日记已删除');
+            
+            // 刷新界面
+            this.renderEntryList();
+            
+            // 触发同步
+            if (window.app?.webdav) {
+                window.app.webdav.markDirty();
+            }
+            
+        } catch (error) {
+            console.error('删除日记失败:', error);
+            this.showToast('删除失败: ' + error.message, 'error');
+        }
     }
     
     /**
@@ -339,15 +365,18 @@ class DiaryModule {
     
     /**
      * 按日期加载日记
+     * @param {string} dateStr - 日期字符串
+     * @param {boolean} autoCreate - 是否在没有日记时自动打开编辑器，默认为 false
      */
-    async loadEntryByDate(dateStr) {
+    async loadEntryByDate(dateStr, autoCreate = false) {
         const entry = this.entries.find(e => e.date === dateStr);
         if (entry) {
             this.showEntry(entry);
-        } else {
-            // 没有该日期的日记，显示新建界面
+        } else if (autoCreate) {
+            // 只有在明确要求时才打开编辑器
             this.showEditor(dateStr);
         }
+        // 如果没有日记且不自动创建，则什么都不做，保持在列表页面
     }
     
     /**
@@ -419,53 +448,39 @@ class DiaryModule {
         this.isEditing = !!entry;
         this.currentEntry = entry;
         
-        const viewContainer = document.getElementById('diary-view');
-        const editorContainer = document.getElementById('diary-editor');
-        const listContainer = document.getElementById('diary-list-container');
+        // 匹配 index.html 中的ID
+        const editorModal = document.getElementById('diaryEditorModal');
+        const diaryContainer = document.querySelector('.diary-container');
         
-        if (viewContainer) viewContainer.style.display = 'none';
-        if (listContainer) listContainer.style.display = 'none';
-        if (editorContainer) editorContainer.style.display = 'block';
+        // 显示编辑器模态框
+        if (editorModal) editorModal.style.display = 'flex';
         
-        // 设置日期
-        const dateInput = document.getElementById('diary-date');
-        if (dateInput) {
-            dateInput.value = dateStr || entry?.date || new Date().toISOString().split('T')[0];
+        // 设置标题
+        const titleInput = document.getElementById('diaryTitle');
+        if (titleInput) {
+            titleInput.value = entry?.title || '';
         }
         
-        // 设置内容
-        const contentInput = document.getElementById('diary-content');
+        // 设置内容 - 匹配 index.html 中的 diaryContent
+        const contentInput = document.getElementById('diaryContent');
         if (contentInput) {
             contentInput.value = entry?.content || '';
         }
         
-        // 设置心情
-        const moodSelector = document.getElementById('mood-selector');
-        if (moodSelector) {
-            moodSelector.querySelectorAll('.mood-option').forEach(btn => {
-                btn.classList.remove('selected');
-                if (entry?.mood && btn.dataset.mood === entry.mood) {
-                    btn.classList.add('selected');
-                }
-            });
+        // 设置心情 - 匹配 index.html 中的 diaryMood
+        const moodSelect = document.getElementById('diaryMood');
+        if (moodSelect && entry?.mood) {
+            moodSelect.value = entry.mood;
         }
         
-        // 设置天气
-        const weatherSelector = document.getElementById('weather-selector');
-        if (weatherSelector) {
-            weatherSelector.querySelectorAll('.weather-option').forEach(btn => {
-                btn.classList.remove('selected');
-                if (entry?.weather && btn.dataset.weather === entry.weather) {
-                    btn.classList.add('selected');
-                }
-            });
+        // 设置天气 - 匹配 index.html 中的 diaryWeather
+        const weatherInput = document.getElementById('diaryWeather');
+        if (weatherInput) {
+            weatherInput.value = entry?.weather || '';
         }
         
-        // 显示/隐藏删除按钮
-        const deleteBtn = document.getElementById('delete-diary-btn');
-        if (deleteBtn) {
-            deleteBtn.style.display = this.isEditing ? 'block' : 'none';
-        }
+        // 保存当前日期用于保存时使用
+        this.currentEditDate = dateStr || entry?.date || new Date().toISOString().split('T')[0];
         
         // 聚焦内容输入框
         if (contentInput) {
@@ -477,32 +492,35 @@ class DiaryModule {
      * 隐藏编辑器
      */
     hideEditor() {
-        const editorContainer = document.getElementById('diary-editor');
-        const listContainer = document.getElementById('diary-list-container');
+        // 匹配 index.html 中的ID
+        const editorModal = document.getElementById('diaryEditorModal');
         
-        if (editorContainer) editorContainer.style.display = 'none';
-        if (listContainer) listContainer.style.display = 'block';
+        if (editorModal) editorModal.style.display = 'none';
         
         this.currentEntry = null;
         this.isEditing = false;
+        this.currentEditDate = null;
     }
     
     /**
      * 保存日记
      */
     async saveEntry() {
-        const dateInput = document.getElementById('diary-date');
-        const contentInput = document.getElementById('diary-content');
-        const moodSelector = document.getElementById('mood-selector');
-        const weatherSelector = document.getElementById('weather-selector');
+        // 匹配 index.html 中的ID
+        const titleInput = document.getElementById('diaryTitle');
+        const contentInput = document.getElementById('diaryContent');
+        const moodSelect = document.getElementById('diaryMood');
+        const weatherInput = document.getElementById('diaryWeather');
         
-        const date = dateInput?.value;
+        // 使用 showEditor 中保存的日期
+        const date = this.currentEditDate || new Date().toISOString().split('T')[0];
+        const title = titleInput?.value || '';
         const content = contentInput?.value || '';
-        const mood = moodSelector?.querySelector('.mood-option.selected')?.dataset.mood || '';
-        const weather = weatherSelector?.querySelector('.weather-option.selected')?.dataset.weather || '';
+        const mood = moodSelect?.value || '';
+        const weather = weatherInput?.value || '';
         
-        if (!date) {
-            this.showToast('请选择日期', 'error');
+        if (!content.trim()) {
+            this.showToast('请输入日记内容', 'error');
             return;
         }
         
@@ -514,6 +532,7 @@ class DiaryModule {
                 const updatedEntry = {
                     ...this.currentEntry,
                     date,
+                    title,
                     content,
                     mood,
                     weather,
@@ -536,6 +555,7 @@ class DiaryModule {
                     // 更新现有日记
                     const updatedEntry = {
                         ...existingEntry,
+                        title,
                         content,
                         mood,
                         weather,
@@ -551,13 +571,16 @@ class DiaryModule {
                     
                     this.showToast('日记已更新');
                 } else {
-                    // 创建新日记
+                    // 创建新日记 - 包含与桌面端兼容的所有字段
                     const newEntry = {
                         id: this.generateId(),
                         date,
+                        title,
                         content,
                         mood,
                         weather,
+                        tags: [],      // 与桌面端兼容
+                        images: [],    // 与桌面端兼容
                         created_at: now,
                         updated_at: now
                     };
@@ -573,7 +596,6 @@ class DiaryModule {
             this.entries.sort((a, b) => new Date(b.date) - new Date(a.date));
             
             // 刷新界面
-            this.renderCalendar();
             this.renderEntryList();
             this.hideEditor();
             
@@ -607,7 +629,6 @@ class DiaryModule {
             this.showToast('日记已删除');
             
             // 刷新界面
-            this.renderCalendar();
             this.renderEntryList();
             this.hideEditor();
             
@@ -690,14 +711,18 @@ class DiaryModule {
     
     /**
      * 导出日记数据（用于同步）
+     * 包含与桌面端兼容的所有字段
      */
     exportData() {
         return this.entries.map(entry => ({
             id: entry.id,
             date: entry.date,
+            title: entry.title,
             content: entry.content,
             mood: entry.mood,
             weather: entry.weather,
+            tags: entry.tags || [],      // 与桌面端兼容
+            images: entry.images || [],  // 与桌面端兼容
             created_at: entry.created_at,
             updated_at: entry.updated_at
         }));
@@ -705,22 +730,37 @@ class DiaryModule {
     
     /**
      * 导入日记数据（用于同步）
+     * 支持从桌面端导入的数据格式
      */
     async importData(entries) {
         for (const entry of entries) {
-            const existing = this.entries.find(e => e.id === entry.id);
+            // 确保导入的数据包含所有必要字段
+            const normalizedEntry = {
+                id: entry.id,
+                date: entry.date || entry.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+                title: entry.title || '',
+                content: entry.content || '',
+                mood: entry.mood || '',
+                weather: entry.weather || '',
+                tags: entry.tags || [],
+                images: entry.images || [],
+                created_at: entry.created_at || new Date().toISOString(),
+                updated_at: entry.updated_at || new Date().toISOString()
+            };
+            
+            const existing = this.entries.find(e => e.id === normalizedEntry.id);
             if (existing) {
                 // 比较更新时间，保留较新的
-                if (new Date(entry.updated_at) > new Date(existing.updated_at)) {
-                    await this.storage.updateDiaryEntry(entry);
-                    const index = this.entries.findIndex(e => e.id === entry.id);
+                if (new Date(normalizedEntry.updated_at) > new Date(existing.updated_at)) {
+                    await this.storage.updateDiaryEntry(normalizedEntry);
+                    const index = this.entries.findIndex(e => e.id === normalizedEntry.id);
                     if (index !== -1) {
-                        this.entries[index] = entry;
+                        this.entries[index] = normalizedEntry;
                     }
                 }
             } else {
-                await this.storage.addDiaryEntry(entry);
-                this.entries.push(entry);
+                await this.storage.addDiaryEntry(normalizedEntry);
+                this.entries.push(normalizedEntry);
             }
         }
         
@@ -728,7 +768,6 @@ class DiaryModule {
         this.entries.sort((a, b) => new Date(b.date) - new Date(a.date));
         
         // 刷新界面
-        this.renderCalendar();
         this.renderEntryList();
     }
 }

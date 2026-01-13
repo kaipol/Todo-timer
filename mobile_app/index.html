@@ -10,6 +10,8 @@
     <link rel="manifest" href="manifest.json">
     <link rel="stylesheet" href="css/styles.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- JSZip 库 - 用于 ZIP 格式同步 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
     <div id="app">
@@ -86,11 +88,11 @@
             <!-- 待办页面 -->
             <section id="memoPage" class="page">
                 <div class="memo-container">
-                    <!-- 添加待办 -->
-                    <div class="add-memo-form">
-                        <input type="text" id="memoInput" placeholder="添加新待办..." class="memo-input">
+                    <!-- 添加待办按钮 -->
+                    <div class="add-memo-header">
+                        <h2 class="memo-title">待办事项</h2>
                         <button class="add-memo-btn" id="addMemoBtn">
-                            <i class="fas fa-plus"></i>
+                            <i class="fas fa-plus"></i> 添加
                         </button>
                     </div>
 
@@ -255,6 +257,7 @@
     <div class="toast-container" id="toastContainer"></div>
 
     <!-- 加载脚本 -->
+    <script src="js/performance.js"></script>
     <script src="js/storage.js"></script>
     <script src="js/webdav.js"></script>
     <script src="js/timer.js"></script>

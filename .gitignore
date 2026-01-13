@@ -1,8 +1,16 @@
+# IDE
 .vscode
 .history
+.idea
+
+# Git
 .git
+
+# Build outputs
 build/*
 dist/*
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -14,3 +22,55 @@ venv/
 .env*/
 .mypy_cache/
 pytest_cache/
+*.egg-info/
+
+# Node.js / Mobile App
+node_modules/
+mobile_app/node_modules/
+mobile_app/dist/
+mobile_app/.vite/
+mobile_app/android/
+mobile_app/ios/
+mobile_app/.capacitor/
+
+# Capacitor
+*.keystore
+*.jks
+local.properties
+
+# Android
+mobile_app/android/app/build/
+mobile_app/android/.gradle/
+mobile_app/android/build/
+mobile_app/android/captures/
+mobile_app/android/.externalNativeBuild/
+mobile_app/android/.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# iOS
+mobile_app/ios/App/Pods/
+mobile_app/ios/DerivedData/
+*.ipa
+*.xcworkspace
+*.xcuserdata
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
