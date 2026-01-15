@@ -125,32 +125,6 @@
                     <!-- 日记列表 -->
                     <div class="diary-list" id="diaryList"></div>
                 </div>
-
-                <!-- 日记编辑器（模态框） -->
-                <div class="diary-editor-modal" id="diaryEditorModal">
-                    <div class="diary-editor">
-                        <div class="editor-header">
-                            <button class="back-btn" id="diaryBackBtn">
-                                <i class="fas fa-arrow-left"></i>
-                            </button>
-                            <input type="text" id="diaryTitle" placeholder="标题" class="diary-title-input">
-                            <button class="save-btn" id="saveDiaryBtn">
-                                <i class="fas fa-check"></i>
-                            </button>
-                        </div>
-                        <div class="editor-meta">
-                            <select id="diaryMood" class="mood-select">
-                                <option value="😊">😊 开心</option>
-                                <option value="😐" selected>😐 平静</option>
-                                <option value="😢">😢 难过</option>
-                                <option value="😤">😤 生气</option>
-                                <option value="😴">😴 疲惫</option>
-                            </select>
-                            <input type="text" id="diaryWeather" placeholder="天气" class="weather-input">
-                        </div>
-                        <textarea id="diaryContent" placeholder="写下今天的故事..." class="diary-content"></textarea>
-                    </div>
-                </div>
             </section>
 
             <!-- 设置页面 -->
@@ -251,6 +225,110 @@
                 <span>设置</span>
             </button>
         </nav>
+    </div>
+
+    <!-- 日记编辑器模态框 - 放在 #app 外部，使用和待办一样的悬浮窗口样式 -->
+    <div class="dialog-overlay diary-dialog-overlay" id="diaryEditorModal" style="display: none;">
+        <div class="dialog diary-dialog">
+            <div class="dialog-header">
+                <h3>📝 写日记</h3>
+                <button class="dialog-close" id="diaryBackBtn">×</button>
+            </div>
+            <div class="dialog-body diary-dialog-body">
+                <!-- 标题输入 -->
+                <div class="form-group">
+                    <label>📌 标题</label>
+                    <input type="text" id="diaryTitle" placeholder="日记标题（可选）">
+                </div>
+                
+                <!-- 心情和天气选择 -->
+                <div class="form-group diary-meta-row">
+                    <div class="diary-meta-item">
+                        <label>😊 心情</label>
+                        <select id="diaryMood">
+                            <option value="">选择心情</option>
+                            <option value="happy">😊 开心</option>
+                            <option value="calm">😌 平静</option>
+                            <option value="sad">😢 难过</option>
+                            <option value="angry">😠 生气</option>
+                            <option value="anxious">😰 焦虑</option>
+                            <option value="excited">🤩 兴奋</option>
+                            <option value="tired">😴 疲惫</option>
+                            <option value="confused">😕 困惑</option>
+                        </select>
+                    </div>
+                    <div class="diary-meta-item">
+                        <label>🌤️ 天气</label>
+                        <select id="diaryWeather">
+                            <option value="">选择天气</option>
+                            <option value="sunny">☀️ 晴天</option>
+                            <option value="cloudy">☁️ 多云</option>
+                            <option value="rainy">🌧️ 雨天</option>
+                            <option value="snowy">❄️ 雪天</option>
+                            <option value="windy">💨 大风</option>
+                            <option value="foggy">🌫️ 雾天</option>
+                            <option value="stormy">⛈️ 暴风雨</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <!-- 日记内容 -->
+                <div class="form-group diary-content-group">
+                    <label>✏️ 内容</label>
+                    <!-- 富文本工具栏 -->
+                    <div class="wysiwyg-toolbar" id="wysiwygToolbar">
+                        <button type="button" class="wysiwyg-btn" data-command="formatBlock" data-value="h1" title="一级标题">
+                            <span>H1</span>
+                        </button>
+                        <button type="button" class="wysiwyg-btn" data-command="formatBlock" data-value="h2" title="二级标题">
+                            <span>H2</span>
+                        </button>
+                        <button type="button" class="wysiwyg-btn" data-command="formatBlock" data-value="h3" title="三级标题">
+                            <span>H3</span>
+                        </button>
+                        <div class="wysiwyg-divider"></div>
+                        <button type="button" class="wysiwyg-btn" data-command="bold" title="粗体 (Ctrl+B)">
+                            <span style="font-weight:bold;">B</span>
+                        </button>
+                        <button type="button" class="wysiwyg-btn" data-command="italic" title="斜体 (Ctrl+I)">
+                            <span style="font-style:italic;">I</span>
+                        </button>
+                        <button type="button" class="wysiwyg-btn" data-command="strikeThrough" title="删除线">
+                            <span style="text-decoration:line-through;">S</span>
+                        </button>
+                        <button type="button" class="wysiwyg-btn" data-command="underline" title="下划线 (Ctrl+U)">
+                            <span style="text-decoration:underline;">U</span>
+                        </button>
+                        <div class="wysiwyg-divider"></div>
+                        <button type="button" class="wysiwyg-btn" data-command="createLink" title="插入链接">
+                            🔗
+                        </button>
+                        <button type="button" class="wysiwyg-btn" data-command="insertImage" title="插入图片">
+                            🖼️
+                        </button>
+                        <div class="wysiwyg-divider"></div>
+                        <button type="button" class="wysiwyg-btn" data-command="insertUnorderedList" title="无序列表">
+                            <span>•</span>
+                        </button>
+                        <button type="button" class="wysiwyg-btn" data-command="insertOrderedList" title="有序列表">
+                            <span>1.</span>
+                        </button>
+                        <button type="button" class="wysiwyg-btn" data-command="formatBlock" data-value="blockquote" title="引用">
+                            <span>"</span>
+                        </button>
+                        <button type="button" class="wysiwyg-btn" data-command="insertHorizontalRule" title="分隔线">
+                            <span>—</span>
+                        </button>
+                    </div>
+                    <!-- 富文本编辑区域 -->
+                    <div id="diaryContent" class="wysiwyg-editor" contenteditable="true" data-placeholder="今天发生了什么..."></div>
+                </div>
+            </div>
+            <div class="dialog-footer">
+                <button class="btn btn-secondary" id="diaryCancelBtn">取消</button>
+                <button class="btn btn-primary" id="saveDiaryBtn">💾 保存</button>
+            </div>
+        </div>
     </div>
 
     <!-- Toast通知 -->

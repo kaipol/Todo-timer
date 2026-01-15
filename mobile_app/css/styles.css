@@ -151,6 +151,7 @@ body {
     height: 100%;
     display: flex;
     flex-direction: column;
+    position: relative;
 }
 
 .app-header {
@@ -296,6 +297,12 @@ body {
 
 .page.active {
     display: block;
+}
+
+/* 日记页面需要相对定位，作为编辑器模态框的定位上下文 */
+#diaryPage {
+    position: relative;
+    height: 100%;
 }
 
 @keyframes fadeUp {
@@ -942,25 +949,46 @@ body {
 }
 
 .diary-editor-modal {
+    /* 使用固定定位，作为底部弹出对话框 */
     position: fixed;
     inset: 0;
-    background: rgba(15, 23, 42, 0.55);
+    background: rgba(15, 23, 42, 0.6);
+    backdrop-filter: blur(4px);
     display: none;
     align-items: flex-end;
-    z-index: 20;
+    justify-content: center;
+    z-index: 50;
+    animation: fadeIn 0.2s ease;
 }
 
 .diary-editor-modal.show {
     display: flex;
 }
 
+.diary-editor-modal.closing {
+    animation: fadeOut 0.2s ease forwards;
+}
+
+.diary-editor-modal.closing .diary-editor {
+    animation: slideDown 0.2s ease forwards;
+}
+
 .diary-editor {
     background: var(--card);
     width: 100%;
-    border-radius: 24px 24px 0 0;
+    max-width: 100%;
+    height: 100%;
     padding: 16px;
-    max-height: 85vh;
-    overflow-y: auto;
+    padding-top: env(safe-area-inset-top, 16px);
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    overflow: hidden;
+    /* 允许内容区域滚动 */
+    touch-action: pan-y;
+    /* 确保内容可以滚动 */
+    position: relative;
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
 }
 
 .editor-header {
@@ -969,6 +997,11 @@ body {
     gap: 8px;
     align-items: center;
     margin-bottom: 12px;
+    /* 不使用 fixed 定位，保持在正常文档流中 */
+    position: relative;
+    background: var(--card);
+    padding: 0;
+    border-radius: 24px 24px 0 0;
 }
 
 .back-btn,
@@ -1003,8 +1036,12 @@ body {
 }
 
 .diary-content {
-    min-height: 220px;
-    resize: vertical;
+    min-height: 0;
+    flex: 1 1 0;
+    resize: none;
+    height: 100%;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 .date-selector {
@@ -1370,6 +1407,8 @@ body {
         transform: translateX(-50%);
         max-width: 520px;
     }
+
+    /* 桌面端日记编辑器模态框 - 已经在 #app 内部，无需额外限制 */
 }
 
 /* ========== 对话框样式 ========== */
@@ -1726,5 +1765,255 @@ body {
     .dialog {
         border-radius: var(--radius-lg);
         max-height: 80vh;
+    }
+}
+
+/* ========== 日记对话框专用样式 ========== */
+/* 日记对话框使用更大的高度以容纳更多内容 */
+
+.diary-dialog-overlay {
+    align-items: flex-end;
+}
+
+.diary-dialog {
+    max-height: 95vh;
+    height: 90vh;
+}
+
+.diary-dialog .dialog-header h3::before {
+    content: '📖';
+}
+
+.diary-dialog-body {
+    display: flex;
+    flex-direction: column;
+    padding: 16px 20px;
+    gap: 12px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+}
+
+/* 日记元数据行 - 心情和天气并排 */
+.diary-meta-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 0;
+}
+
+.diary-meta-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.diary-meta-item label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+    margin-bottom: 0;
+}
+
+.diary-meta-item select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    background: #fff;
+    color: var(--ink);
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+.diary-meta-item select:focus {
+    border-color: var(--brand);
+    box-shadow: 0 0 0 3px rgba(14, 165, 164, 0.1);
+}
+
+/* ========== 富文本 WYSIWYG 工具栏样式 ========== */
+.wysiwyg-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 8px 10px;
+    background: var(--bg-accent);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    margin-bottom: 8px;
+}
+
+.wysiwyg-btn {
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 14px;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: all 0.2s ease;
+    padding: 0;
+}
+
+.wysiwyg-btn:hover {
+    background: #fff;
+    color: var(--brand);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.wysiwyg-btn:active {
+    transform: scale(0.95);
+}
+
+.wysiwyg-btn.active {
+    background: var(--brand);
+    color: #fff;
+}
+
+.wysiwyg-divider {
+    width: 1px;
+    height: 24px;
+    background: var(--border);
+    margin: 4px 4px;
+    align-self: center;
+}
+
+/* 工具栏按钮图标样式 */
+.wysiwyg-btn i {
+    font-size: 14px;
+}
+
+.wysiwyg-btn span {
+    font-size: 12px;
+    font-weight: 600;
+}
+
+/* 日记内容区域 */
+.diary-content-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+    min-height: 0;
+}
+
+.diary-content-group label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+}
+
+/* WYSIWYG 富文本编辑器样式 */
+.wysiwyg-editor {
+    flex: 1;
+    min-height: 200px;
+    line-height: 1.6;
+    padding: 14px 16px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-md);
+    font-size: 15px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #fff;
+    color: var(--ink);
+    outline: none;
+    transition: all 0.2s ease;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.wysiwyg-editor:focus {
+    border-color: var(--brand);
+    box-shadow: 0 0 0 3px rgba(14, 165, 164, 0.1);
+}
+
+/* 占位符样式 */
+.wysiwyg-editor:empty::before {
+    content: attr(data-placeholder);
+    color: #9ca3af;
+    pointer-events: none;
+}
+
+/* 富文本编辑器内部元素样式 */
+.wysiwyg-editor h1 {
+    font-size: 1.8em;
+    font-weight: 700;
+    margin: 0.5em 0 0.3em;
+    color: var(--ink);
+}
+
+.wysiwyg-editor h2 {
+    font-size: 1.5em;
+    font-weight: 600;
+    margin: 0.5em 0 0.3em;
+    color: var(--ink);
+}
+
+.wysiwyg-editor h3 {
+    font-size: 1.2em;
+    font-weight: 600;
+    margin: 0.4em 0 0.2em;
+    color: var(--ink);
+}
+
+.wysiwyg-editor p {
+    margin: 0.5em 0;
+}
+
+.wysiwyg-editor ul,
+.wysiwyg-editor ol {
+    margin: 0.5em 0;
+    padding-left: 1.5em;
+}
+
+.wysiwyg-editor li {
+    margin: 0.2em 0;
+}
+
+.wysiwyg-editor blockquote {
+    margin: 0.5em 0;
+    padding: 0.5em 1em;
+    border-left: 4px solid var(--brand);
+    background: var(--bg-accent);
+    color: var(--muted);
+    font-style: italic;
+}
+
+.wysiwyg-editor a {
+    color: var(--brand);
+    text-decoration: underline;
+}
+
+.wysiwyg-editor img {
+    max-width: 100%;
+    height: auto;
+    border-radius: var(--radius-sm);
+    margin: 0.5em 0;
+}
+
+.wysiwyg-editor hr {
+    border: none;
+    border-top: 2px solid var(--border);
+    margin: 1em 0;
+}
+
+/* 桌面端日记对话框居中显示 */
+@media (min-width: 768px) {
+    .diary-dialog-overlay {
+        align-items: center;
+    }
+    
+    .diary-dialog {
+        max-height: 85vh;
+        height: auto;
+        min-height: 600px;
+        border-radius: var(--radius-lg);
+    }
+    
+    .wysiwyg-editor {
+        min-height: 300px;
     }
 }

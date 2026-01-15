@@ -60,6 +60,7 @@ class DiaryModule {
         await this.loadEntries();
         this.renderEntryList();
         this.bindEvents();
+        this.bindMarkdownToolbar();
     }
     
     /**
@@ -89,13 +90,32 @@ class DiaryModule {
         // 保存按钮 - 匹配 index.html 中的 saveDiaryBtn
         const saveBtn = document.getElementById('saveDiaryBtn');
         if (saveBtn) {
-            saveBtn.addEventListener('click', () => this.saveEntry());
+            saveBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('点击保存按钮');
+                this.saveEntry();
+            });
         }
         
-        // 取消/返回按钮 - 匹配 index.html 中的 diaryBackBtn
-        const cancelBtn = document.getElementById('diaryBackBtn');
+        // 关闭按钮 - 匹配 index.html 中的 diaryBackBtn (dialog-close)
+        const closeBtn = document.getElementById('diaryBackBtn');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.hideEditor();
+            });
+        }
+        
+        // 取消按钮 - 匹配 index.html 中的 diaryCancelBtn
+        const cancelBtn = document.getElementById('diaryCancelBtn');
         if (cancelBtn) {
-            cancelBtn.addEventListener('click', () => this.hideEditor());
+            cancelBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.hideEditor();
+            });
         }
         
         // 删除按钮
@@ -104,11 +124,201 @@ class DiaryModule {
             deleteBtn.addEventListener('click', () => this.deleteCurrentEntry());
         }
         
+        // 模态框背景点击关闭 (dialog-overlay)
+        const editorModal = document.getElementById('diaryEditorModal');
+        if (editorModal) {
+            editorModal.addEventListener('click', (e) => {
+                // 只有点击模态框背景（不是内容区域）时才关闭
+                if (e.target === editorModal) {
+                    this.hideEditor();
+                }
+            });
+            
+            // 阻止对话框内容区域的点击事件冒泡
+            const dialog = editorModal.querySelector('.dialog');
+            if (dialog) {
+                dialog.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                });
+            }
+        }
+        
         // 心情选择
         this.renderMoodSelector();
         
         // 天气选择
         this.renderWeatherSelector();
+    }
+    
+    /**
+     * 绑定富文本工具栏事件
+     */
+    bindMarkdownToolbar() {
+        const toolbar = document.getElementById('wysiwygToolbar');
+        const editor = document.getElementById('diaryContent');
+        
+        if (!toolbar || !editor) return;
+        
+        // 阻止工具栏按钮的 mousedown 事件，防止编辑器失去焦点
+        toolbar.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+        });
+        
+        // 阻止 touchstart 事件，防止移动端编辑器失去焦点
+        toolbar.addEventListener('touchstart', (e) => {
+            // 阻止默认行为以防止焦点丢失
+            if (e.target.closest('.wysiwyg-btn')) {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                // 在 touchstart 中直接执行命令，因为 preventDefault 会阻止 click 事件
+                const btn = e.target.closest('.wysiwyg-btn');
+                if (!btn) return;
+                
+                const command = btn.dataset.command;
+                const value = btn.dataset.value || null;
+                
+                this.executeWysiwygCommand(command, value, editor);
+            }
+        }, { passive: false });
+        
+        // 工具栏按钮点击事件 (用于桌面端)
+        toolbar.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const btn = e.target.closest('.wysiwyg-btn');
+            if (!btn) return;
+            
+            const command = btn.dataset.command;
+            const value = btn.dataset.value || null;
+            
+            this.executeWysiwygCommand(command, value, editor);
+        });
+        
+        // 键盘快捷键
+        editor.addEventListener('keydown', (e) => {
+            if (e.ctrlKey || e.metaKey) {
+                switch (e.key.toLowerCase()) {
+                    case 'b':
+                        e.preventDefault();
+                        this.executeWysiwygCommand('bold', null, editor);
+                        break;
+                    case 'i':
+                        e.preventDefault();
+                        this.executeWysiwygCommand('italic', null, editor);
+                        break;
+                    case 'u':
+                        e.preventDefault();
+                        this.executeWysiwygCommand('underline', null, editor);
+                        break;
+                }
+            }
+        });
+    }
+    
+    /**
+     * 执行 WYSIWYG 命令
+     */
+    executeWysiwygCommand(command, value, editor) {
+        // 保存当前选区（移动端点击按钮可能导致选区丢失）
+        const selection = window.getSelection();
+        let savedRange = null;
+        
+        if (selection && selection.rangeCount > 0) {
+            savedRange = selection.getRangeAt(0).cloneRange();
+        }
+        
+        // 确保编辑器获得焦点
+        editor.focus();
+        
+        // 恢复选区
+        if (savedRange) {
+            selection.removeAllRanges();
+            selection.addRange(savedRange);
+        }
+        
+        // 如果没有选区或选区不在编辑器内，将光标放到编辑器末尾
+        if (!selection || selection.rangeCount === 0 || !editor.contains(selection.anchorNode)) {
+            const range = document.createRange();
+            range.selectNodeContents(editor);
+            range.collapse(false); // 折叠到末尾
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
+        
+        // 对于特殊命令，需要额外处理
+        if (command === 'formatBlock') {
+            // 检查当前选区是否已在该标题格式
+            const sel = window.getSelection();
+            if (sel && sel.rangeCount > 0) {
+                const range = sel.getRangeAt(0);
+                const startNode = range.startContainer;
+                const element = startNode.nodeType === 1 ? startNode : startNode.parentElement;
+                const currentBlock = element ? element.closest(value.toUpperCase()) : null;
+                
+                if (currentBlock && currentBlock.tagName === value.toUpperCase()) {
+                    // 已经是该格式，转换为普通段落
+                    document.execCommand('formatBlock', false, 'P');
+                } else {
+                    // 应用新格式
+                    document.execCommand('formatBlock', false, value);
+                }
+            } else {
+                // 没有选区时，直接应用格式
+                document.execCommand('formatBlock', false, value);
+            }
+        } else if (command === 'createLink') {
+            const url = prompt('请输入链接地址:', 'https://');
+            if (url) {
+                document.execCommand('createLink', false, url);
+            }
+        } else if (command === 'insertImage') {
+            const url = prompt('请输入图片地址:');
+            if (url) {
+                document.execCommand('insertImage', false, url);
+            }
+        } else {
+            // 标准命令
+            document.execCommand(command, false, value);
+        }
+        
+        // 触发内容更新事件
+        this.updateEditorContent();
+    }
+    
+    /**
+     * 更新编辑器内容并触发预览更新
+     */
+    updateEditorContent() {
+        // 内容已通过 execCommand 更新，无需额外处理
+        // 但可以在这里添加实时预览逻辑
+    }
+    
+    /**
+     * 在行首插入文本
+     */
+    insertAtLineStart(beforeText, selectedText, prefix) {
+        // 找到当前行的开始位置
+        const lastNewline = beforeText.lastIndexOf('\n');
+        const lineStart = lastNewline + 1;
+        const beforeLine = beforeText.substring(0, lineStart);
+        const currentLineStart = beforeText.substring(lineStart);
+        
+        // 检查是否已经有该前缀
+        if (currentLineStart.startsWith(prefix)) {
+            // 移除前缀
+            return {
+                fullText: beforeLine + currentLineStart.substring(prefix.length) + selectedText,
+                cursorPos: beforeText.length - prefix.length + selectedText.length
+            };
+        } else {
+            // 添加前缀
+            return {
+                fullText: beforeLine + prefix + currentLineStart + selectedText,
+                cursorPos: beforeText.length + prefix.length + selectedText.length
+            };
+        }
     }
     
     /**
@@ -461,10 +671,11 @@ class DiaryModule {
             titleInput.value = entry?.title || '';
         }
         
-        // 设置内容 - 匹配 index.html 中的 diaryContent
-        const contentInput = document.getElementById('diaryContent');
-        if (contentInput) {
-            contentInput.value = entry?.content || '';
+        // 设置内容 - 匹配 index.html 中的 diaryContent (contenteditable div)
+        const contentDiv = document.getElementById('diaryContent');
+        if (contentDiv) {
+            // 对于 contenteditable div，使用 innerHTML 而不是 value
+            contentDiv.innerHTML = entry?.content || '';
         }
         
         // 设置心情 - 匹配 index.html 中的 diaryMood
@@ -483,8 +694,8 @@ class DiaryModule {
         this.currentEditDate = dateStr || entry?.date || new Date().toISOString().split('T')[0];
         
         // 聚焦内容输入框
-        if (contentInput) {
-            contentInput.focus();
+        if (contentDiv) {
+            contentDiv.focus();
         }
     }
     
@@ -506,21 +717,36 @@ class DiaryModule {
      * 保存日记
      */
     async saveEntry() {
+        console.log('开始保存日记...');
         // 匹配 index.html 中的ID
         const titleInput = document.getElementById('diaryTitle');
-        const contentInput = document.getElementById('diaryContent');
+        const contentDiv = document.getElementById('diaryContent');
         const moodSelect = document.getElementById('diaryMood');
         const weatherInput = document.getElementById('diaryWeather');
         
+        if (!contentDiv) {
+            console.error('找不到日记内容编辑框');
+            this.showToast('系统错误：找不到编辑框', 'error');
+            return;
+        }
+
         // 使用 showEditor 中保存的日期
         const date = this.currentEditDate || new Date().toISOString().split('T')[0];
         const title = titleInput?.value || '';
-        const content = contentInput?.value || '';
+        // 对于 contenteditable div，使用 innerHTML 而不是 value
+        const content = contentDiv.innerHTML || '';
         const mood = moodSelect?.value || '';
         const weather = weatherInput?.value || '';
         
-        if (!content.trim()) {
-            this.showToast('请输入日记内容', 'error');
+        console.log('日记内容长度:', content.length);
+
+        // 检查内容是否为空（过滤掉空的 HTML 标签）
+        const textContent = contentDiv.textContent.trim();
+        const hasMedia = content.includes('<img') || content.includes('<iframe');
+        
+        if (!textContent && !hasMedia) {
+            console.log('日记内容为空');
+            this.showToast('请输入日记内容', 'warning');
             return;
         }
         
