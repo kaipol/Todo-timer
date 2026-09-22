@@ -54,11 +54,14 @@ class MainWindow(QMainWindow):
         
         # 当前数据缓存
         self.current_data = None
-        
-        # 定时保存应用使用数据
-        self.save_timer = QTimer()
-        self.save_timer.timeout.connect(self._auto_save_usage)
-        self.save_timer.start(60000)  # 每分钟保存一次
+
+        # 应用使用数据的定期保存由 AppMonitor 线程内执行（按天归档），
+        # 这里只挂接系统会话结束（关机/注销/重启）钩子做兜底保存。
+        # Windows 关机走 Qt 会话管理流程，不会触发 closeEvent。
+        app = QApplication.instance()
+        if app:
+            app.commitDataRequest.connect(self._on_session_end)
+            app.aboutToQuit.connect(self._on_session_end)
 
     def _setup_ui(self):
         """设置 UI - 左右分栏布局"""
@@ -2469,19 +2472,19 @@ class MainWindow(QMainWindow):
         
         self.today_usage_label.setText(time_str)
     
-    def _auto_save_usage(self):
-        """自动保存"""
-        if self.current_data and self.current_data.get('all_stats'):
-            app_usage_storage.save_daily_usage(datetime.now().date(), self.current_data['all_stats'])
-    
+    def _on_session_end(self, *args):
+        """系统会话结束（关机/重启/注销）或应用退出时的兜底保存"""
+        try:
+            if hasattr(self, 'monitor'):
+                self.monitor.save_now()
+        except Exception as e:
+            print(f"会话结束保存失败: {e}")
+
     def closeEvent(self, event):
         """关闭"""
-        self._auto_save_usage()
-        
         if hasattr(self, 'monitor'):
+            # stop() 内部会等待线程结束并做最终保存
             self.monitor.stop()
-        if hasattr(self, 'save_timer'):
-            self.save_timer.stop()
         if hasattr(self, 'mini_window'):
             self.mini_window.close()
         

@@ -7,6 +7,7 @@
 - 支持批量操作
 """
 import json
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -72,16 +73,23 @@ class BaseStorage:
     
     def _save_json(self, file_path: Path, data: Dict[str, Any]):
         """
-        保存数据到JSON文件并更新缓存
-        
+        原子化保存数据到JSON文件并更新缓存
+
+        先写入临时文件并落盘，再用 os.replace 原子替换目标文件。
+        强制关机/进程被杀时最坏只丢失本次写入，不会留下损坏的半写文件。
+
         Args:
             file_path: 文件路径
             data: 要保存的数据
         """
+        tmp_path = file_path.with_suffix(file_path.suffix + '.tmp')
         try:
-            with open(file_path, 'w', encoding='utf-8') as f:
+            with open(tmp_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
-            
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, file_path)
+
             # 更新缓存
             cache_key = str(file_path)
             self._cache[cache_key] = {
@@ -91,41 +99,59 @@ class BaseStorage:
             }
         except Exception as e:
             print(f"保存文件失败 {file_path}: {e}")
-    
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except OSError:
+                pass
+
     def _load_json(self, file_path: Path, use_cache: bool = True) -> Dict[str, Any]:
         """
         从JSON文件加载数据（带缓存）
-        
+
+        文件损坏时自动把损坏文件改名备份后返回空，避免应用无法启动，
+        同时保留原始数据供人工恢复。
+
         Args:
             file_path: 文件路径
             use_cache: 是否使用缓存（默认True）
-            
+
         Returns:
             加载的数据字典
         """
         cache_key = str(file_path)
-        
+
         # 检查缓存
         if use_cache and self._is_cache_valid(file_path):
             return self._cache[cache_key]['data']
-        
+
         if not file_path.exists():
             return {}
-        
+
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            
+
             # 更新缓存
             self._cache[cache_key] = {
                 'data': data,
                 'mtime': file_path.stat().st_mtime,
                 'cached_at': time.time()
             }
-            
+
             return data
         except Exception as e:
             print(f"加载文件失败 {file_path}: {e}")
+            # JSON 损坏：备份原文件后返回空，下次写入会重建该文件
+            try:
+                backup = file_path.with_name(
+                    f"{file_path.stem}.corrupt-{datetime.now().strftime('%Y%m%d%H%M%S')}{file_path.suffix}"
+                )
+                file_path.rename(backup)
+                print(f"已将损坏文件备份为: {backup}")
+                self._invalidate_cache(file_path)
+            except OSError:
+                pass
             return {}
     
     def _invalidate_cache(self, file_path: Optional[Path] = None):
