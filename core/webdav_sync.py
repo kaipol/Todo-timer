@@ -124,6 +124,24 @@ class WebDAVSync:
             self.config.get('server_url') and
             self.config.get('username')
         )
+
+    def get_last_sync_info(self) -> dict:
+        """获取上次同步信息，供设置界面展示。
+
+        时间存的是 ISO 格式；解析失败时原样返回，避免打开设置因脏数据崩溃。
+        """
+        last_sync = self.config.get('last_sync')
+        display = last_sync
+        if last_sync:
+            try:
+                display = datetime.fromisoformat(last_sync).strftime('%Y-%m-%d %H:%M')
+            except (ValueError, TypeError):
+                display = str(last_sync)
+        return {
+            'last_sync': last_sync,
+            'last_sync_display': display,
+            'status': self.config.get('last_sync_status'),
+        }
     
     def add_sync_callback(self, callback: Callable):
         """添加同步完成回调"""
